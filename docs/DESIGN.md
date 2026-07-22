@@ -85,13 +85,14 @@ Neovim → ヘルパー(リクエスト、1行1JSON、`\n` 区切り):
 
 ```
 lua/outlook/
-  init.lua        -- setup(opts), LazyVim向けplugin spec想定のentrypoint
+  init.lua        -- setup(opts) のみ。実体は config.lua に委譲(folke系プラグインの慣習)
+  config.lua       -- defaults/options/extend()。lazy.nvim/snacks.nvim等と同じ形
+  health.lua       -- :checkhealth outlook (Windows/powershell.exe/snacks.nvim有無を確認)
   helper.lua       -- jobstart管理, request(method, params, callback), 改行区切りJSONの送受信
   picker.lua       -- snacks.picker連携(一覧・アクション), 無ければ vim.ui.select にフォールバック
   preview.lua      -- snacks.win によるメール本文プレビュー/読み取りウィンドウ
   commands.lua     -- :Outlook系ユーザーコマンド定義
   keymaps.lua      -- <leader>m 配下のキーマップ + which-key group登録
-  config.lua       -- デフォルトoptsとマージ
 ```
 
 - **picker.lua**: `LazyVim.has("snacks.nvim")` で判定し、あれば `Snacks.picker.pick` でメール一覧(件名/差出人/日時、未読は強調表示)+ プレビュー(`preview` フィールドで本文抜粋)+ アクション(既読切替、本文を`preview.lua`のウィンドウで開く)を提供。無い環境では `vim.ui.select` + 別コマンドでの本文表示にデグレードする。

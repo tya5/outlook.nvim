@@ -3,14 +3,9 @@
 
 local M = {}
 
----@class outlook.Config
-local defaults = {}
-
-M.config = vim.deepcopy(defaults)
-
 ---@param opts? outlook.Config
 function M.setup(opts)
-  M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
+  require("outlook.config").extend(opts)
 end
 
 return M
