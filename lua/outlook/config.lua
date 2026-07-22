@@ -5,7 +5,22 @@
 local M = {}
 
 ---@class outlook.Config
-M.defaults = {}
+M.defaults = {
+  -- Register the default <leader>m keymaps (see keymaps.lua). Set to
+  -- false if you'd rather wire your own via the `keys` field of your
+  -- lazy.nvim plugin spec.
+  keys = true,
+  -- Spawn the PowerShell helper (and connect to Outlook) as soon as
+  -- setup() runs, instead of waiting for the first request. Only useful
+  -- if your lazy.nvim spec loads the plugin eagerly (e.g. `event =
+  -- "VeryLazy"`) rather than on `cmd`/`keys` — in that case it trades a
+  -- small background cost at startup for a near-instant first open.
+  -- No effect if setup() itself only runs on first command/keypress.
+  prewarm = false,
+  -- How long a list_messages/search_messages result is reused for
+  -- identical requests before hitting the helper again (milliseconds).
+  cache_ttl_ms = 15000,
+}
 
 ---@type outlook.Config
 M.options = vim.deepcopy(M.defaults)

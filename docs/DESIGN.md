@@ -99,14 +99,23 @@ lua/outlook/
 - **preview.lua**: `Snacks.win` で読み取り専用フローティングウィンドウを開き、本文を非編集バッファとして表示(`bo.modifiable=false`, `bo.filetype="mail"` 等)。
 - 通知(取得失敗、Outlook未起動等)は `Snacks.notify` / 無ければ `vim.notify` にフォールバック。
 
-## 6. キーマップ / コマンド (案)
+## 6. キーマップ / コマンド (実装済み)
 
-- `<leader>m` を "mail" グループとして which-key に登録(`opts.spec` に group追加)。
+- `<leader>m` を "mail" グループとして which-key に登録(`opts.keys ~= false` の場合、`keymaps.lua` が `which-key.add` で登録)。
   - `<leader>mm` : メール一覧を開く(picker)
   - `<leader>mu` : 未読のみ一覧
-  - `<leader>mr` : カーソル下のメールの既読/未読トグル
   - `<leader>ms` : 検索(`vim.ui.input`で件名/差出人条件を受けて`search_messages`)
-- ユーザーコマンド: `:OutlookOpen`, `:OutlookRefresh`, `:OutlookHelperRestart`(ヘルパープロセスの再起動、デバッグ用)。
+  - 既読/未読トグル専用の既定キーマップは持たない。メッセージを開くと自動的に既読になり(通常のメールクライアントのUXに合わせた設計判断)、`snacks.picker` 使用時のみ picker 内 `<C-r>` で明示トグルできる。
+- ユーザーコマンド: `:OutlookOpen`, `:OutlookRefresh`(キャッシュ無視で再取得), `:OutlookUnread`, `:OutlookSearch`, `:OutlookHelperRestart`(ヘルパープロセスの再起動、デバッグ用)。
+
+## 6.1 レイテンシ対策(実装済み)
+
+PowerShellプロセス起動 + Outlook COM接続には無視できない遅延があるため、以下で体感速度を確保する。
+
+- **常駐ヘルパー**: `helper.lua` はプロセスを一度起動したら保持し、リクエスト毎の再起動を避ける。
+- **prewarm**: `opts.prewarm = true` にすると `setup()` 実行時点でヘルパー起動+Outlook接続をバックグラウンドで開始する。lazy.nvim の読み込みトリガーを `cmd`/`keys`(=ユーザー操作まで未ロード)ではなく `event = "VeryLazy"` 等にしているユーザー向けのオプション。
+- **picker側の非同期化**: `snacks.picker` 使用時は同期`items`ではなく非同期financerの形で結果が届き次第描画し、picker自体は即座に開く。`vim.ui.select`フォールバック時は取得中である旨を即時通知する。
+- **短時間キャッシュ + 多重リクエスト抑止**: `picker.lua` が同一パラメータの結果を `cache_ttl_ms`(既定15秒)の間再利用し、同時に発火した同一リクエストは1本のOutlook COM呼び出しに集約する(`:OutlookRefresh` はキャッシュを無視して強制再取得)。
 
 ## 7. 配布・インストール前提
 
@@ -114,12 +123,14 @@ lua/outlook/
 - lazy.nvim ユーザー向けの通常プラグインスペックとして配布(LazyVim公式extrasへの登録はv1では狙わず、将来的に安定後に検討)。
 - README に「LazyVimへの組み込み例」としてコピペ用の `lua/plugins/outlook.lua` スペック片を掲載する(実質的にextra相当のUXを個人配布で提供)。
 
-## 8. 未解決・要検討事項(実装着手前に確認したい点)
+## 8. 未解決・要検討事項
 
-1. 対象メールボックスが単一(既定プロファイル)前提か、複数アカウント/共有メールボックス対応も見るか。
-2. `list_messages` のページング方式(件数指定のみ/日付レンジ/カーソルベース)をどうするか。
-3. 本文表示は プレーンテキスト(`Body`)のみで十分か、HTML本文の簡易テキスト化まで要るか。
-4. ヘルパーの配置場所(プラグインリポジトリ同梱の `.ps1` を `stdpath("data")` にコピーして実行 か、リポジトリ内パスを直接叩くか)と実行ポリシー(`-ExecutionPolicy Bypass` を都度指定する形でよいか)。
+1. 対象メールボックスが単一(既定プロファイル)前提か、複数アカウント/共有メールボックス対応も見るか。(v1は既定プロファイル1つのみ)
+2. `list_messages` のページング方式(件数指定のみ/日付レンジ/カーソルベース)をどうするか。(v1は件数上限のみ)
+3. 本文表示は プレーンテキスト(`Body`)のみで十分か、HTML本文の簡易テキスト化まで要るか。(v1は`Body`のみ)
+4. ~~ヘルパーの配置場所~~ → 解決済み: リポジトリ同梱の `helper/outlook-helper.ps1` をそのまま `-File` 指定で実行する(コピー不要)。`lua/outlook/helper.lua` がプラグイン自身のパスから相対的にスクリプトパスを解決する。
+5. `list_messages`/`get_message` 等で `Invoke-*` が `$null` を返すケースを全て `OUTLOOK_NOT_RUNNING` に丸めている(Outlook未接続 と 該当アイテムなし を区別していない)。実機確認しながらエラーコードを細分化するか判断が必要。
+6. Outlook側での既読状態変更(他クライアント/デバイスからの変更)を、この一覧キャッシュ(既定15秒)がどこまで許容して古いままにするかは実運用で様子見。
 
 ## 9. 段階的ロードマップ
 
