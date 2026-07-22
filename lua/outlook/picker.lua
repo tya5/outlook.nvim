@@ -33,6 +33,10 @@ end
 --- Fetch items for `method`/`params`, deduping concurrent identical
 --- requests and reusing a recent result when within cache_ttl_ms.
 --- @param force boolean? bypass the cache (used by :OutlookRefresh)
+--- @return boolean served_from_cache true if `callback` was already
+--- invoked synchronously from a warm cache entry; false means a real
+--- helper round-trip is in flight (either just started, or joined an
+--- existing one) and callers may want to show a loading indicator.
 local function fetch(method, params, force, callback)
   local key = cache_key(method, params)
 
@@ -40,13 +44,13 @@ local function fetch(method, params, force, callback)
     local cached = cache[key]
     if cached and (now_ms() - cached.ts) < config.options.cache_ttl_ms then
       callback(true, cached.items)
-      return
+      return true
     end
   end
 
   if inflight[key] then
     table.insert(inflight[key], callback)
-    return
+    return false
   end
   inflight[key] = { callback }
 
@@ -65,6 +69,7 @@ local function fetch(method, params, force, callback)
       end
     end
   end)
+  return false
 end
 
 --- Drop cached list_messages/search_messages results so the next
@@ -213,11 +218,7 @@ function M.list(opts)
     unread_only = opts.unread_only or false,
   }
 
-  if not has_snacks() then
-    notify.info("Outlook: 読み込み中…")
-  end
-
-  fetch("list_messages", params, opts.force, function(ok, result)
+  local served_from_cache = fetch("list_messages", params, opts.force, function(ok, result)
     if not ok then
       return vim.schedule(function()
         notify.error(result)
@@ -227,6 +228,14 @@ function M.list(opts)
       M.show(result, { title = opts.title })
     end)
   end)
+
+  -- Only show a "loading" indicator when a real helper round-trip is
+  -- actually happening; a cache hit already invoked the callback above
+  -- synchronously and needs no such feedback (previously this fired
+  -- unconditionally on every non-snacks call, including cache hits).
+  if not served_from_cache then
+    notify.info("Outlook: 読み込み中…")
+  end
 end
 
 return M

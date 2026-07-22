@@ -100,6 +100,28 @@ describe("outlook.picker (cache/dedupe)", function()
     assert.equals(3, #calls) -- cache was invalidated by the mutation, not served stale
   end)
 
+  it("only shows a loading notification on a real fetch, not on a cache hit", function()
+    local info_calls = 0
+    package.loaded["outlook.notify"] = {
+      info = function()
+        info_calls = info_calls + 1
+      end,
+      error = function() end,
+    }
+    package.loaded["outlook.picker"] = nil
+    local picker = require("outlook.picker")
+
+    picker.list({ folder = "inbox" }) -- cache miss: one loading notification
+    assert.equals(1, info_calls)
+    calls[1].cb(true, { items = {} })
+
+    picker.list({ folder = "inbox" }) -- cache hit: no additional notification
+    assert.equals(1, info_calls)
+
+    picker.list({ folder = "inbox", force = true }) -- forced bypass: notifies again
+    assert.equals(2, info_calls)
+  end)
+
   it("treats different folders as separate cache entries", function()
     local picker = require("outlook.picker")
 
