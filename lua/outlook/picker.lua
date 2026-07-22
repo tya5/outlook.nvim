@@ -28,8 +28,23 @@ local function now_ms()
   return vim.uv.now()
 end
 
+--- Build a deterministic cache/inflight key. Doesn't rely on
+--- vim.json.encode's table iteration order (unspecified for string
+--- keys, even if stable in practice for a fixed Lua/table-hashing
+--- build): params here are always flat scalars (folder/limit/
+--- unread_only/query), so sorting the keys and joining is sufficient.
 local function cache_key(method, params)
-  return method .. ":" .. vim.json.encode(params or {})
+  params = params or {}
+  local keys = {}
+  for k in pairs(params) do
+    keys[#keys + 1] = k
+  end
+  table.sort(keys)
+  local parts = {}
+  for _, k in ipairs(keys) do
+    parts[#parts + 1] = k .. "=" .. tostring(params[k])
+  end
+  return method .. ":" .. table.concat(parts, "&")
 end
 
 --- Fetch items for `method`/`params`, deduping concurrent identical
