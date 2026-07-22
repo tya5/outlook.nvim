@@ -1,11 +1,9 @@
 -- Mail list UI: snacks.picker when available, vim.ui.select fallback.
 --
--- Latency handling (see docs/DESIGN.md and project decisions):
---  * snacks.picker path uses an async finder, so the picker window opens
---    immediately with its built-in loading state instead of blocking on
---    the helper round-trip.
---  * vim.ui.select path has no such affordance, so we notify "loading"
---    immediately and populate once data arrives.
+-- Latency handling (see docs/DESIGN.md 6.1 for the full rationale):
+--  * both UI paths open only once the result (from cache or the
+--    helper) is ready; a cache hit resolves synchronously with no
+--    perceptible wait, a miss shows a "loading" notification first.
 --  * identical requests (same folder/filter) are cached briefly and
 --    in-flight duplicates are coalesced, so repeated keypresses don't
 --    each re-hit Outlook COM.
@@ -16,6 +14,10 @@ local preview = require("outlook.preview")
 local config = require("outlook.config")
 
 local M = {}
+
+-- "Bold" is not a highlight group that exists by default; define our
+-- own so unread messages render distinctly regardless of colorscheme.
+vim.api.nvim_set_hl(0, "OutlookUnread", { bold = true, default = true })
 
 ---@type table<string, {items: table[], ts: integer}>
 local cache = {}
@@ -168,7 +170,7 @@ function M.show(messages, opts)
       title = opts.title or "Outlook",
       items = vim.tbl_map(to_picker_item, messages),
       format = function(item)
-        return { { item.text, item.unread and "Bold" or "Normal" } }
+        return { { item.text, item.unread and "OutlookUnread" or "Normal" } }
       end,
       preview = function(ctx)
         ctx.preview:set_lines(preview_lines(ctx.item))
