@@ -87,6 +87,22 @@ local function format_item(msg)
   return string.format("%s %-20s %s", status, msg.from or "", msg.subject or "(no subject)")
 end
 
+--- list_messages/search_messages intentionally omit the message body
+--- (see docs/DESIGN.md and helper/outlook-helper.ps1's
+--- ConvertTo-MessageSummary): fetching Body for every row in a folder
+--- listing is slow and touches an Object Model Guard-sensitive
+--- property. The preview pane below is header-only for v1; full body
+--- is fetched on demand via open_message()/get_message.
+local function preview_lines(msg)
+  return {
+    ("Subject : %s"):format(msg.subject or ""),
+    ("From    : %s"):format(msg.from or ""),
+    ("Date    : %s"):format(msg.received or ""),
+    "",
+    (msg.unread and "(未読 — <CR>で開くと本文を取得し既読になります)" or "(<CR>で本文を開く)"),
+  }
+end
+
 local function to_picker_item(msg)
   return {
     text = format_item(msg),
@@ -96,7 +112,6 @@ local function to_picker_item(msg)
     unread = msg.unread,
     entry_id = msg.entry_id,
     store_id = msg.store_id,
-    preview = { text = msg.preview or "", ft = "text" },
   }
 end
 
@@ -151,7 +166,7 @@ function M.show(messages, opts)
         return { { item.text, item.unread and "Bold" or "Normal" } }
       end,
       preview = function(ctx)
-        ctx.preview:set_lines(vim.split(ctx.item.preview.text, "\n", { plain = true }))
+        ctx.preview:set_lines(preview_lines(ctx.item))
         return true
       end,
       confirm = function(picker, item)

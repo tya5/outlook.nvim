@@ -91,20 +91,20 @@ function Get-FolderByName {
 }
 
 function ConvertTo-MessageSummary {
-  param($Item)
-  $preview = ""
-  if ($Item.Body) {
-    $len = [Math]::Min(200, $Item.Body.Length)
-    $preview = $Item.Body.Substring(0, $len)
-  }
+  # Deliberately does not touch $Item.Body or $Item.Parent: Body is slow
+  # to fetch per-row across a whole folder listing and is one of the
+  # properties Object Model Guard may prompt on; Parent.StoreID resolves
+  # a COM object per item instead of once per folder. Callers pass the
+  # already-resolved folder StoreID in instead. Full body is fetched
+  # on demand by get_message when a single message is opened.
+  param($Item, [string]$StoreId)
   return @{
     entry_id = $Item.EntryID
-    store_id = $Item.Parent.StoreID
+    store_id = $StoreId
     subject  = $Item.Subject
     from     = $Item.SenderName
     received = $Item.ReceivedTime.ToString("yyyy-MM-dd HH:mm")
     unread   = [bool]$Item.UnRead
-    preview  = $preview
   }
 }
 
@@ -138,6 +138,7 @@ function Invoke-ListMessages {
     return $null
   }
 
+  $storeId = $folder.StoreID
   $items = $folder.Items
   $items.Sort("[ReceivedTime]", $true)
   if ($unreadOnly) {
@@ -153,7 +154,7 @@ function Invoke-ListMessages {
     if ($it.Class -ne $OL_MAIL_ITEM) {
       continue
     }
-    $out.Add((ConvertTo-MessageSummary -Item $it)) | Out-Null
+    $out.Add((ConvertTo-MessageSummary -Item $it -StoreId $storeId)) | Out-Null
     $count++
   }
   return @{ items = $out }
@@ -205,6 +206,7 @@ function Invoke-SearchMessages {
   $filter = "@SQL=" + '"urn:schemas:httpmail:subject" LIKE ' + "'%$escaped%'" `
     + " OR " + '"urn:schemas:httpmail:fromemail" LIKE ' + "'%$escaped%'"
 
+  $storeId = $folder.StoreID
   $items = $folder.Items
   $items.Sort("[ReceivedTime]", $true)
   $matched = $items.Restrict($filter)
@@ -214,7 +216,7 @@ function Invoke-SearchMessages {
     if ($it.Class -ne $OL_MAIL_ITEM) {
       continue
     }
-    $out.Add((ConvertTo-MessageSummary -Item $it)) | Out-Null
+    $out.Add((ConvertTo-MessageSummary -Item $it -StoreId $storeId)) | Out-Null
   }
   return @{ items = $out }
 }

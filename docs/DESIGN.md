@@ -95,7 +95,7 @@ lua/outlook/
   keymaps.lua      -- <leader>m 配下のキーマップ + which-key group登録
 ```
 
-- **picker.lua**: `LazyVim.has("snacks.nvim")` で判定し、あれば `Snacks.picker.pick` でメール一覧(件名/差出人/日時、未読は強調表示)+ プレビュー(`preview` フィールドで本文抜粋)+ アクション(既読切替、本文を`preview.lua`のウィンドウで開く)を提供。無い環境では `vim.ui.select` + 別コマンドでの本文表示にデグレードする。
+- **picker.lua**: `snacks.nvim` の有無で判定し、あれば `Snacks.picker.pick` でメール一覧(件名/差出人/日時、未読は強調表示)+ プレビュー(件名/差出人/日時のヘッダのみ。本文は含まない — 一覧取得時に`Body`へアクセスしないための設計判断。3.2節参照)+ アクション(既読切替、本文を`preview.lua`のウィンドウで開く)を提供。無い環境では `vim.ui.select` + 別コマンドでの本文表示にデグレードする。
 - **preview.lua**: `Snacks.win` で読み取り専用フローティングウィンドウを開き、本文を非編集バッファとして表示(`bo.modifiable=false`, `bo.filetype="mail"` 等)。
 - 通知(取得失敗、Outlook未起動等)は `Snacks.notify` / 無ければ `vim.notify` にフォールバック。
 
