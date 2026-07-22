@@ -59,6 +59,16 @@ function Send-Err {
   Write-Response @{ id = $Id; ok = $false; error = @{ code = $Code; message = $Message } }
 }
 
+# Invoke-* functions signal a specific error by returning this shape
+# instead of a normal result; the main loop checks for it before
+# falling back to the generic "$null -> OUTLOOK_NOT_RUNNING" rule (see
+# Invoke-Method's callers below). Success results are always plain
+# hashtables without an __error key, so this can't collide.
+function New-HelperError {
+  param([string]$Code, [string]$Message)
+  return @{ __error = @{ code = $Code; message = $Message } }
+}
+
 function Connect-Outlook {
   # Returns $true/$false; never launches Outlook.
   if ($script:Namespace) {
@@ -160,14 +170,27 @@ function Invoke-ListMessages {
   return @{ items = $out }
 }
 
+function Get-ItemByIdOrNull {
+  # GetItemFromID throws (rather than returning $null) for an entry ID
+  # that no longer resolves (e.g. the message was deleted/moved since
+  # the list was fetched); normalize both cases to $null so callers
+  # have one shape to check.
+  param($EntryId, $StoreId)
+  try {
+    return $script:Namespace.GetItemFromID($EntryId, $StoreId)
+  } catch {
+    return $null
+  }
+}
+
 function Invoke-GetMessage {
   param($Params)
   if (-not (Connect-Outlook)) {
     return $null
   }
-  $item = $script:Namespace.GetItemFromID($Params.entry_id, $Params.store_id)
+  $item = Get-ItemByIdOrNull -EntryId $Params.entry_id -StoreId $Params.store_id
   if (-not $item) {
-    return $null
+    return New-HelperError -Code "ITEM_NOT_FOUND" -Message "指定されたメッセージが見つかりませんでした(削除・移動された可能性があります)"
   }
   return @{
     subject  = $item.Subject
@@ -182,9 +205,9 @@ function Invoke-SetRead {
   if (-not (Connect-Outlook)) {
     return $null
   }
-  $item = $script:Namespace.GetItemFromID($Params.entry_id, $Params.store_id)
+  $item = Get-ItemByIdOrNull -EntryId $Params.entry_id -StoreId $Params.store_id
   if (-not $item) {
-    return $null
+    return New-HelperError -Code "ITEM_NOT_FOUND" -Message "指定されたメッセージが見つかりませんでした(削除・移動された可能性があります)"
   }
   $item.UnRead = $Unread
   $item.Save()
@@ -261,11 +284,14 @@ while ($true) {
   $id = $req.id
   try {
     $result = Invoke-Method -Method $req.method -Params $req.params
-    if ($null -eq $result) {
-      # Every Invoke-* returns $null only when Connect-Outlook failed or
-      # GetItemFromID found nothing; both collapse to this generic code
-      # in v1 rather than threading a distinct not-found case through.
-      Send-Err -Id $id -Code "OUTLOOK_NOT_RUNNING" -Message "Outlook に接続できませんでした (未起動か、対象が見つかりません)"
+    if ($result -is [hashtable] -and $result.ContainsKey("__error")) {
+      Send-Err -Id $id -Code $result.__error.code -Message $result.__error.message
+    } elseif ($null -eq $result) {
+      # Every remaining Invoke-* returns plain $null only when
+      # Connect-Outlook itself failed (Outlook not running / attach
+      # failed); not-found cases now go through New-HelperError above
+      # instead of collapsing into this generic code.
+      Send-Err -Id $id -Code "OUTLOOK_NOT_RUNNING" -Message "Outlook に接続できませんでした (未起動です)"
     } else {
       Send-Ok -Id $id -Result $result
     }
