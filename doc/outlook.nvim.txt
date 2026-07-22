@@ -1,0 +1,25 @@
+*outlook.nvim.txt*    Browse Microsoft Outlook mail from Neovim (LazyVim)
+
+==============================================================================
+CONTENTS                                                  *outlook.nvim*
+
+    1. Introduction .......... |outlook.nvim-introduction|
+    2. Requirements .......... |outlook.nvim-requirements|
+
+==============================================================================
+1. Introduction                                    *outlook.nvim-introduction*
+
+outlook.nvim is a thin bridge between Neovim and Microsoft Outlook
+(desktop / Classic Outlook, Windows), driven over the Outlook COM object
+model. See the project's docs/DESIGN.md for architecture details.
+
+Status: design stage, not yet implemented.
+
+==============================================================================
+2. Requirements                                    *outlook.nvim-requirements*
+
+- Windows
+- Microsoft Outlook (desktop, Classic Outlook)
+- Windows PowerShell 5.1 (bundled with Windows)
+
+ vim:tw=78:ts=8:noet:ft=help:norl:
