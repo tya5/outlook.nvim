@@ -116,12 +116,14 @@ end
 --- property. The preview pane below is header-only for v1; full body
 --- is fetched on demand via open_message()/get_message.
 local function preview_lines(msg)
+  local hint = msg.unread and "(未読 — <CR>で開くと本文を取得し既読になります)"
+    or "(<CR>で本文を開く)"
   return {
     ("Subject : %s"):format(msg.subject or ""),
     ("From    : %s"):format(msg.from or ""),
     ("Date    : %s"):format(msg.received or ""),
     "",
-    (msg.unread and "(未読 — <CR>で開くと本文を取得し既読になります)" or "(<CR>で本文を開く)"),
+    hint,
   }
 end
 
