@@ -84,6 +84,22 @@ describe("outlook.picker (cache/dedupe)", function()
     assert.equals(2, #calls) -- previous in-flight entry must not still be occupying the key
   end)
 
+  it("invalidates cached list results after a successful mark_read/mark_unread", function()
+    local picker = require("outlook.picker")
+
+    picker.list({ folder = "inbox" })
+    calls[1].cb(true, { items = {} })
+    assert.equals(1, #calls)
+
+    -- Cache is warm: a repeat list() would normally be served from it.
+    picker.toggle_read({ entry_id = "e1", store_id = "s1", unread = true })
+    assert.equals(2, #calls) -- the mark_read request itself
+    calls[2].cb(true, { entry_id = "e1", unread = false })
+
+    picker.list({ folder = "inbox" })
+    assert.equals(3, #calls) -- cache was invalidated by the mutation, not served stale
+  end)
+
   it("treats different folders as separate cache entries", function()
     local picker = require("outlook.picker")
 

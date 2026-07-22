@@ -67,6 +67,17 @@ local function fetch(method, params, force, callback)
   end)
 end
 
+--- Drop cached list_messages/search_messages results so the next
+--- picker.list()/search picks up fresh unread state instead of serving
+--- a stale snapshot for up to cache_ttl_ms after a mutation.
+local function invalidate_lists()
+  for key in pairs(cache) do
+    if key:find("^list_messages:") or key:find("^search_messages:") then
+      cache[key] = nil
+    end
+  end
+end
+
 local function has_snacks()
   return pcall(require, "snacks")
 end
@@ -101,7 +112,11 @@ function M.open_message(item)
     end)
     if item.unread then
       -- Opening a message marks it read, matching common mail-client UX.
-      helper.request("mark_read", { entry_id = item.entry_id, store_id = item.store_id }, function() end)
+      helper.request("mark_read", { entry_id = item.entry_id, store_id = item.store_id }, function(ok)
+        if ok then
+          invalidate_lists()
+        end
+      end)
     end
   end)
 end
@@ -109,7 +124,9 @@ end
 function M.toggle_read(item)
   local method = item.unread and "mark_read" or "mark_unread"
   helper.request(method, { entry_id = item.entry_id, store_id = item.store_id }, function(ok, result)
-    if not ok then
+    if ok then
+      invalidate_lists()
+    else
       vim.schedule(function()
         notify.error(result)
       end)
