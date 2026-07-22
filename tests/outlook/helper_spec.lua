@@ -22,6 +22,13 @@ describe("outlook.helper", function()
     orig.executable = vim.fn.executable
     orig.has = vim.fn.has
     orig.filereadable = vim.fn.filereadable
+
+    -- Reset config to pure defaults before every test so a test that
+    -- overrides e.g. request_timeout_ms can't leak into later tests
+    -- (in this file or, since PlenaryBustedDirectory may run multiple
+    -- spec files in one process, other spec files too).
+    package.loaded["outlook.config"] = nil
+    require("outlook.config")
   end)
 
   after_each(function()
@@ -126,6 +133,59 @@ describe("outlook.helper", function()
 
     assert.is_false(got_ok)
     assert.equals("HELPER_EXITED", got_err.code)
+  end)
+
+  it("rejects a request with code=TIMEOUT if no response arrives in time", function()
+    stub_env()
+    vim.fn.jobstart = function()
+      return 1
+    end
+    vim.fn.chansend = function()
+      return 0
+    end
+
+    require("outlook.config").extend({ request_timeout_ms = 20 })
+
+    local helper = fresh_helper()
+    local got_ok, got_err
+    helper.request("ping", {}, function(ok, err)
+      got_ok, got_err = ok, err
+    end)
+
+    vim.wait(200, function()
+      return got_ok ~= nil
+    end, 10)
+
+    assert.is_false(got_ok)
+    assert.equals("TIMEOUT", got_err.code)
+  end)
+
+  it("does not fire a stale timeout after the request already resolved", function()
+    stub_env()
+    local on_stdout_cb
+    vim.fn.jobstart = function(_, opts)
+      on_stdout_cb = opts.on_stdout
+      return 1
+    end
+    vim.fn.chansend = function()
+      return 0
+    end
+
+    require("outlook.config").extend({ request_timeout_ms = 30 })
+
+    local helper = fresh_helper()
+    local resolutions = 0
+    helper.request("ping", {}, function()
+      resolutions = resolutions + 1
+    end)
+
+    on_stdout_cb(1, { vim.json.encode({ id = 1, ok = true, result = { pong = true } }), "" })
+
+    -- Wait past the (now-cancelled) timeout window; the callback must
+    -- not fire a second time with a TIMEOUT error.
+    vim.wait(60)
+
+    assert.equals(1, resolutions)
   end)
 
   it("fails fast without spawning when powershell.exe is missing", function()

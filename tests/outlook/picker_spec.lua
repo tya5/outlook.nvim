@@ -73,6 +73,17 @@ describe("outlook.picker (cache/dedupe)", function()
     calls[1].cb(true, { items = {} })
   end)
 
+  it("clears the in-flight slot on error, so a later call re-hits the helper", function()
+    local picker = require("outlook.picker")
+
+    picker.list({ folder = "inbox" })
+    assert.equals(1, #calls)
+    calls[1].cb(false, { code = "TIMEOUT", message = "boom" })
+
+    picker.list({ folder = "inbox" })
+    assert.equals(2, #calls) -- previous in-flight entry must not still be occupying the key
+  end)
+
   it("treats different folders as separate cache entries", function()
     local picker = require("outlook.picker")
 

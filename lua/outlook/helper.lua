@@ -6,6 +6,7 @@
 -- never block the UI thread waiting on Outlook COM latency.
 
 local notify = require("outlook.notify")
+local config = require("outlook.config")
 
 local M = {}
 
@@ -16,15 +17,38 @@ local state = {
   job_id = nil,
   starting = false,
   next_id = 0,
-  pending = {}, -- id -> callback(ok, result_or_error)
+  pending = {}, -- id -> { callback = fun(ok, result_or_error), timer = uv_timer }
   stdout_buf = "",
 }
+
+local function stop_timer(entry)
+  if entry.timer then
+    pcall(function()
+      entry.timer:stop()
+      entry.timer:close()
+    end)
+  end
+end
+
+--- Look up and remove a pending request, stopping its timeout timer, then
+--- invoke its callback. Safe to call at most once per id (no-op if the id
+--- is unknown, e.g. already resolved or already timed out).
+local function resolve(id, ok, result_or_err)
+  local entry = state.pending[id]
+  if not entry then
+    return
+  end
+  state.pending[id] = nil
+  stop_timer(entry)
+  entry.callback(ok, result_or_err)
+end
 
 local function reject_all(reason)
   local pending = state.pending
   state.pending = {}
-  for _, cb in pairs(pending) do
-    cb(false, { code = "HELPER_EXITED", message = reason })
+  for _, entry in pairs(pending) do
+    stop_timer(entry)
+    entry.callback(false, { code = "HELPER_EXITED", message = reason })
   end
 end
 
@@ -42,15 +66,10 @@ local function handle_line(line)
     -- No event types are emitted in v1 (polling only).
     return
   end
-  local cb = state.pending[msg.id]
-  if not cb then
-    return
-  end
-  state.pending[msg.id] = nil
   if msg.ok then
-    cb(true, msg.result)
+    resolve(msg.id, true, msg.result)
   else
-    cb(false, msg.error)
+    resolve(msg.id, false, msg.error)
   end
 end
 
@@ -167,14 +186,25 @@ function M.request(method, params, callback)
 
   state.next_id = state.next_id + 1
   local id = state.next_id
-  state.pending[id] = callback
 
   local ok, line = pcall(vim.json.encode, { id = id, method = method, params = params or vim.empty_dict() })
   if not ok then
-    state.pending[id] = nil
     callback(false, { code = "ENCODE_ERROR", message = line })
     return
   end
+
+  local timeout_ms = config.options.request_timeout_ms
+  local timer = nil
+  if timeout_ms and timeout_ms > 0 then
+    timer = vim.defer_fn(function()
+      resolve(id, false, {
+        code = "TIMEOUT",
+        message = ("helperの応答がありませんでした (%dms)"):format(timeout_ms),
+      })
+    end, timeout_ms)
+  end
+  state.pending[id] = { callback = callback, timer = timer }
+
   vim.fn.chansend(state.job_id, line .. "\n")
 end
 

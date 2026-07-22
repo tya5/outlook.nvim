@@ -20,6 +20,11 @@ M.defaults = {
   -- How long a list_messages/search_messages result is reused for
   -- identical requests before hitting the helper again (milliseconds).
   cache_ttl_ms = 15000,
+  -- How long to wait for a helper response before giving up on a
+  -- request (milliseconds). Guards against a wedged Outlook COM call
+  -- (or a malformed response line the helper silently drops) leaving a
+  -- request pending forever.
+  request_timeout_ms = 30000,
 }
 
 ---@type outlook.Config
