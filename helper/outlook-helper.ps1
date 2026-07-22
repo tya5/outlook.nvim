@@ -197,6 +197,7 @@ function Invoke-SearchMessages {
     return $null
   }
   $folderName = if ($Params.folder) { $Params.folder } else { "inbox" }
+  $limit = if ($Params.limit) { [int]$Params.limit } else { 50 }
   $folder = Get-FolderByName -Name $folderName
   if (-not $folder) {
     return $null
@@ -212,11 +213,16 @@ function Invoke-SearchMessages {
   $matched = $items.Restrict($filter)
 
   $out = New-Object System.Collections.Generic.List[object]
+  $count = 0
   foreach ($it in $matched) {
+    if ($count -ge $limit) {
+      break
+    }
     if ($it.Class -ne $OL_MAIL_ITEM) {
       continue
     }
     $out.Add((ConvertTo-MessageSummary -Item $it -StoreId $storeId)) | Out-Null
+    $count++
   }
   return @{ items = $out }
 }
