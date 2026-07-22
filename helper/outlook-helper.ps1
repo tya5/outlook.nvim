@@ -22,9 +22,15 @@
     than requiring a helper restart.
 #>
 
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-[Console]::InputEncoding = [System.Text.Encoding]::UTF8
-$OutputEncoding = [System.Text.Encoding]::UTF8
+# [Console]::OutputEncoding/InputEncoding setters throw IOException when
+# stdio isn't a real console (exactly our case: Neovim's jobstart spawns
+# us with piped stdio), which would kill this process before it ever
+# writes a line. Read/write UTF-8 explicitly via our own stream
+# wrappers instead of depending on the Console class' encoding at all.
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$script:StdIn = New-Object System.IO.StreamReader([Console]::OpenStandardInput(), $Utf8NoBom)
+$script:StdOut = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput(), $Utf8NoBom)
+$script:StdOut.AutoFlush = $true
 
 $script:OutlookApp = $null
 $script:Namespace = $null
@@ -40,8 +46,7 @@ $OL_MAIL_ITEM = 43 # olMail (MailItem.Class)
 function Write-Response {
   param($Object)
   $json = $Object | ConvertTo-Json -Depth 10 -Compress
-  [Console]::Out.WriteLine($json)
-  [Console]::Out.Flush()
+  $script:StdOut.WriteLine($json)
 }
 
 function Send-Ok {
@@ -230,7 +235,7 @@ function Invoke-Method {
 
 # Main loop: one JSON request per line in, one JSON response per line out.
 while ($true) {
-  $line = [Console]::In.ReadLine()
+  $line = $script:StdIn.ReadLine()
   if ($null -eq $line) {
     break # stdin closed (Neovim stopped the job) -> exit
   }
