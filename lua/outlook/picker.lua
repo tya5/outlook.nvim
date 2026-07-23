@@ -306,9 +306,17 @@ function M.toggle_flag(item, picker)
   end)
 end
 
---- Explicit action (picker's <C-n>): fetch a bigger page of the same
+--- Explicit action (picker's <C-e>): fetch a bigger page of the same
 --- list/search and replace the picker's items with it, without closing
 --- the picker.
+---
+--- Deliberately NOT <C-n>/<C-p> (snacks.picker's default list_down/
+--- list_up navigation — confirmed against snacks.nvim's source) or the
+--- other Ctrl-key defaults it already binds (<C-f>=preview_scroll_down,
+--- <C-d>/<C-u>=scroll, etc., see docs/DESIGN.md 6.2): those are
+--- pressed constantly while browsing, so overriding one for an
+--- occasional-use action would be a worse trade than <C-r>/<C-f>/<C-l>
+--- already are. <C-e> is confirmed unbound by default.
 ---
 --- This is NOT true incremental pagination: Outlook COM's Items
 --- collection has no offset/cursor, and snacks.picker's finder is
@@ -368,7 +376,7 @@ end
 --- Render an already-fetched message list.
 --- @param messages table[] raw items from the helper (see docs/DESIGN.md)
 --- @param opts table? { title, method, params } — method/params (e.g.
---- {folder=,limit=,unread_only=} or {query=,limit=}) enable <C-n>
+--- {folder=,limit=,unread_only=} or {query=,limit=}) enable <C-e>
 --- "load more"; omit them to disable it for this listing.
 function M.show(messages, opts)
   opts = opts or {}
@@ -423,7 +431,7 @@ function M.show(messages, opts)
             ["<C-r>"] = { "toggle_read", mode = { "i", "n" } },
             ["<C-f>"] = { "toggle_flag", mode = { "i", "n" } },
             ["<C-l>"] = { "load_body", mode = { "i", "n" } },
-            ["<C-n>"] = { "load_more", mode = { "i", "n" } },
+            ["<C-e>"] = { "load_more", mode = { "i", "n" } },
           },
         },
       },
