@@ -151,7 +151,7 @@ local function render_preview(item)
     table.insert(lines, "")
     vim.list_extend(lines, vim.split(body, "\n", { plain = true }))
   else
-    table.insert(lines, "(<C-l> で本文を読み込む — 読み込むと既読になります)")
+    table.insert(lines, "(<C-l> to load the body — marks it read)")
   end
   return lines
 end
@@ -335,7 +335,7 @@ function M.load_more(picker)
   local new_limit = state.limit + LOAD_MORE_PAGE_SIZE
   local params = vim.tbl_extend("force", {}, state.params, { limit = new_limit })
 
-  notify.info("Outlook: もっと読み込み中…")
+  notify.info("Outlook: loading more…")
   helper.request(state.method, params, function(ok, result)
     state.loading = false
     if not ok then
@@ -367,7 +367,7 @@ function M.load_more(picker)
       end)
 
       if reached_end then
-        notify.info("Outlook: これ以上のメールはありません")
+        notify.info("Outlook: no more messages")
       end
     end)
   end)
@@ -479,7 +479,7 @@ function M.list(opts)
   -- synchronously and needs no such feedback (previously this fired
   -- unconditionally on every non-snacks call, including cache hits).
   if not served_from_cache then
-    notify.info("Outlook: 読み込み中…")
+    notify.info("Outlook: loading…")
   end
 end
 

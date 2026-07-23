@@ -201,7 +201,7 @@ function Invoke-GetMessage {
   }
   $item = Get-ItemByIdOrNull -EntryId $Params.entry_id -StoreId $Params.store_id
   if (-not $item) {
-    return New-HelperError -Code "ITEM_NOT_FOUND" -Message "指定されたメッセージが見つかりませんでした(削除・移動された可能性があります)"
+    return New-HelperError -Code "ITEM_NOT_FOUND" -Message "Message not found (it may have been deleted or moved)"
   }
   return @{
     subject     = $item.Subject
@@ -219,7 +219,7 @@ function Invoke-SetRead {
   }
   $item = Get-ItemByIdOrNull -EntryId $Params.entry_id -StoreId $Params.store_id
   if (-not $item) {
-    return New-HelperError -Code "ITEM_NOT_FOUND" -Message "指定されたメッセージが見つかりませんでした(削除・移動された可能性があります)"
+    return New-HelperError -Code "ITEM_NOT_FOUND" -Message "Message not found (it may have been deleted or moved)"
   }
   $item.UnRead = $Unread
   $item.Save()
@@ -235,7 +235,7 @@ function Invoke-SetFlag {
   }
   $item = Get-ItemByIdOrNull -EntryId $Params.entry_id -StoreId $Params.store_id
   if (-not $item) {
-    return New-HelperError -Code "ITEM_NOT_FOUND" -Message "指定されたメッセージが見つかりませんでした(削除・移動された可能性があります)"
+    return New-HelperError -Code "ITEM_NOT_FOUND" -Message "Message not found (it may have been deleted or moved)"
   }
   if ($Flagged) {
     $item.FlagStatus = 2 # olFlagMarked
@@ -328,7 +328,7 @@ while ($true) {
       # Connect-Outlook itself failed (Outlook not running / attach
       # failed); not-found cases now go through New-HelperError above
       # instead of collapsing into this generic code.
-      Send-Err -Id $id -Code "OUTLOOK_NOT_RUNNING" -Message "Outlook に接続できませんでした (未起動です)"
+      Send-Err -Id $id -Code "OUTLOOK_NOT_RUNNING" -Message "Could not connect to Outlook (it is not running)"
     } else {
       Send-Ok -Id $id -Result $result
     }

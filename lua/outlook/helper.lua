@@ -58,7 +58,7 @@ local function handle_line(line)
   end
   local ok, msg = pcall(vim.json.decode, line)
   if not ok or type(msg) ~= "table" then
-    notify.error("helperからの応答をパースできませんでした: " .. line)
+    notify.error("failed to parse helper response: " .. line)
     return
   end
   if msg.event then
@@ -103,7 +103,7 @@ local function on_exit(_, code)
   state.job_id = nil
   state.starting = false
   if code ~= 0 then
-    notify.error(("helperプロセスが終了しました (exit code %d)"):format(code))
+    notify.error(("helper process exited (exit code %d)"):format(code))
   end
   reject_all("helper process exited")
 end
@@ -120,15 +120,15 @@ function M.start()
   end
 
   if vim.fn.has("win32") == 0 then
-    notify.error("outlook.nvim はWindows専用です")
+    notify.error("outlook.nvim is Windows-only")
     return
   end
   if vim.fn.executable("powershell.exe") == 0 then
-    notify.error("powershell.exe が見つかりません")
+    notify.error("powershell.exe not found")
     return
   end
   if vim.fn.filereadable(helper_script) == 0 then
-    notify.error("helperスクリプトが見つかりません: " .. helper_script)
+    notify.error("helper script not found: " .. helper_script)
     return
   end
 
@@ -151,7 +151,7 @@ function M.start()
   })
 
   if state.job_id <= 0 then
-    notify.error("helperプロセスの起動に失敗しました")
+    notify.error("failed to start the helper process")
     state.job_id = nil
   end
   state.starting = false
@@ -180,7 +180,7 @@ end
 function M.request(method, params, callback)
   M.start()
   if not M.is_running() then
-    callback(false, { code = "HELPER_NOT_RUNNING", message = "helperプロセスを起動できませんでした" })
+    callback(false, { code = "HELPER_NOT_RUNNING", message = "could not start the helper process" })
     return
   end
 
@@ -199,7 +199,7 @@ function M.request(method, params, callback)
     timer = vim.defer_fn(function()
       resolve(id, false, {
         code = "TIMEOUT",
-        message = ("helperの応答がありませんでした (%dms)"):format(timeout_ms),
+        message = ("no response from the helper (%dms)"):format(timeout_ms),
       })
     end, timeout_ms)
   end

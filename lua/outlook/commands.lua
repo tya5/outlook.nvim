@@ -14,11 +14,11 @@ function M.setup()
   end, { desc = "Open unread Outlook messages" })
 
   vim.api.nvim_create_user_command("OutlookSearch", function()
-    vim.ui.input({ prompt = "Outlook 検索 (件名/差出人): " }, function(query)
+    vim.ui.input({ prompt = "Outlook search (subject/from): " }, function(query)
       if not query or query == "" then
         return
       end
-      require("outlook.notify").info("Outlook: 検索中…")
+      require("outlook.notify").info("Outlook: searching…")
       local params = { query = query, limit = 50 }
       require("outlook.helper").request("search_messages", params, function(ok, result)
         if not ok then
