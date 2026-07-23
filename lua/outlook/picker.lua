@@ -171,13 +171,44 @@ local function refresh_preview_if_current(item)
   end
 end
 
+--- Keep a picker row in sync with its item table after a mutation
+--- (toggle_read/toggle_flag/mark-read-on-view all update `item` in
+--- place, but the row snacks already rendered for it was built from a
+--- one-time snapshot at list-open time — see docs/DESIGN.md and
+--- docs/HANDOFF.md: without this, the change is only visible after
+--- closing and reopening the picker, even though the underlying
+--- Outlook COM write already succeeded).
+--- @param picker table? the picker instance, if available (actions get
+--- one; the vim.ui.select fallback path doesn't)
+local function refresh_row(picker, item)
+  item.text = format_item(item)
+  if not picker then
+    return
+  end
+  -- Best-effort: ask the picker to redraw now so the row updates
+  -- immediately rather than only on the next redraw snacks would have
+  -- done anyway (e.g. the cursor moving off this row and back). The
+  -- exact refresh call isn't confirmed against a real snacks.nvim
+  -- install from this environment, so any mismatch here is silently
+  -- swallowed — the mutated item.text/unread/flag_status above are
+  -- what actually matters and are always applied regardless.
+  pcall(function()
+    if picker.list and picker.list.update then
+      picker.list:update()
+    elseif picker.update then
+      picker:update()
+    end
+  end)
+end
+
 --- Fetch a message's full body via get_message, then mark it read (if
 --- it was unread) — matching common mail-client UX where viewing a
 --- message is what marks it read, whether that view is the full
 --- floating window (open_message) or the picker's own preview pane
 --- (load_body). Both are explicit user actions; nothing here fires on
 --- its own.
-local function fetch_and_mark_read(item, on_body)
+--- @param picker table? see refresh_row
+local function fetch_and_mark_read(item, on_body, picker)
   helper.request("get_message", { entry_id = item.entry_id, store_id = item.store_id }, function(ok, result)
     if not ok then
       return vim.schedule(function()
@@ -188,9 +219,10 @@ local function fetch_and_mark_read(item, on_body)
       on_body(result)
     end)
     if item.unread then
-      helper.request("mark_read", { entry_id = item.entry_id, store_id = item.store_id }, function(ok2)
+      helper.request("mark_read", { entry_id = item.entry_id, store_id = item.store_id }, function(ok2, mark_result)
         if ok2 then
-          item.unread = false
+          item.unread = mark_result.unread
+          refresh_row(picker, item)
           invalidate_lists()
         end
       end)
@@ -202,7 +234,7 @@ end
 --- the picker's own preview pane, without leaving the picker (unlike
 --- <CR>, which opens the full floating window). Only ever runs when
 --- the user presses the key — never automatically.
-local function load_body(item)
+local function load_body(item, picker)
   if body_cache[item.entry_id] then
     refresh_preview_if_current(item)
     return
@@ -210,7 +242,7 @@ local function load_body(item)
   fetch_and_mark_read(item, function(result)
     body_cache[item.entry_id] = result.body or ""
     refresh_preview_if_current(item)
-  end)
+  end, picker)
 end
 
 local function to_picker_item(msg)
@@ -226,17 +258,23 @@ local function to_picker_item(msg)
   }
 end
 
-function M.open_message(item)
+--- @param picker table? see refresh_row. The confirm handler passes
+--- none (the picker is closing anyway); the vim.ui.select fallback has
+--- none either way.
+function M.open_message(item, picker)
   fetch_and_mark_read(item, function(result)
     body_cache[item.entry_id] = result.body or ""
     preview.open(result)
-  end)
+  end, picker)
 end
 
-function M.toggle_read(item)
+--- @param picker table? see refresh_row
+function M.toggle_read(item, picker)
   local method = item.unread and "mark_read" or "mark_unread"
   helper.request(method, { entry_id = item.entry_id, store_id = item.store_id }, function(ok, result)
     if ok then
+      item.unread = result.unread
+      refresh_row(picker, item)
       invalidate_lists()
     else
       vim.schedule(function()
@@ -249,10 +287,13 @@ end
 --- v1 only toggles between "flagged" and "none" (see
 --- helper/outlook-helper.ps1's Invoke-SetFlag); "complete" isn't
 --- reachable from here yet.
-function M.toggle_flag(item)
+--- @param picker table? see refresh_row
+function M.toggle_flag(item, picker)
   local method = (item.flag_status == "flagged") and "clear_flag" or "set_flag"
   helper.request(method, { entry_id = item.entry_id, store_id = item.store_id }, function(ok, result)
     if ok then
+      item.flag_status = result.flag_status
+      refresh_row(picker, item)
       invalidate_lists()
     else
       vim.schedule(function()
@@ -288,14 +329,14 @@ function M.show(messages, opts)
         M.open_message(item)
       end,
       actions = {
-        toggle_read = function(_, item)
-          M.toggle_read(item)
+        toggle_read = function(picker, item)
+          M.toggle_read(item, picker)
         end,
-        toggle_flag = function(_, item)
-          M.toggle_flag(item)
+        toggle_flag = function(picker, item)
+          M.toggle_flag(item, picker)
         end,
-        load_body = function(_, item)
-          load_body(item)
+        load_body = function(picker, item)
+          load_body(item, picker)
         end,
       },
       win = {

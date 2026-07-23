@@ -84,7 +84,7 @@ describe("outlook.picker (cache/dedupe)", function()
     assert.equals(2, #calls) -- previous in-flight entry must not still be occupying the key
   end)
 
-  it("invalidates cached list results after a successful mark_read/mark_unread", function()
+  it("invalidates the list cache and updates the item in place after mark_read/mark_unread", function()
     local picker = require("outlook.picker")
 
     picker.list({ folder = "inbox" })
@@ -92,9 +92,16 @@ describe("outlook.picker (cache/dedupe)", function()
     assert.equals(1, #calls)
 
     -- Cache is warm: a repeat list() would normally be served from it.
-    picker.toggle_read({ entry_id = "e1", store_id = "s1", unread = true })
+    local item = { entry_id = "e1", store_id = "s1", unread = true, flag_status = "none" }
+    picker.toggle_read(item)
     assert.equals(2, #calls) -- the mark_read request itself
     calls[2].cb(true, { entry_id = "e1", unread = false })
+
+    -- The already-open picker's row must reflect the change immediately
+    -- (via the mutated item + recomputed text), not only after the
+    -- picker is closed and reopened against the invalidated cache.
+    assert.is_false(item.unread)
+    assert.is_nil(item.text:find("●", 1, true))
 
     picker.list({ folder = "inbox" })
     assert.equals(3, #calls) -- cache was invalidated by the mutation, not served stale
@@ -129,17 +136,27 @@ describe("outlook.picker (cache/dedupe)", function()
     calls[1].cb(true, { items = {} })
     assert.equals(1, #calls)
 
-    picker.toggle_flag({ entry_id = "e1", store_id = "s1", flag_status = "none" })
+    local item = { entry_id = "e1", store_id = "s1", flag_status = "none" }
+    picker.toggle_flag(item)
     assert.equals(2, #calls)
     assert.equals("set_flag", calls[2].method)
     calls[2].cb(true, { entry_id = "e1", flag_status = "flagged" })
 
+    -- Same immediacy requirement as toggle_read: the open picker's row
+    -- must show the flag without needing to reopen.
+    assert.equals("flagged", item.flag_status)
+    assert.is_not_nil(item.text:find("🚩", 1, true))
+
     picker.list({ folder = "inbox" })
     assert.equals(3, #calls) -- cache invalidated by the flag change
 
-    picker.toggle_flag({ entry_id = "e1", store_id = "s1", flag_status = "flagged" })
+    picker.toggle_flag(item)
     assert.equals(4, #calls)
     assert.equals("clear_flag", calls[4].method)
+    calls[4].cb(true, { entry_id = "e1", flag_status = "none" })
+
+    assert.equals("none", item.flag_status)
+    assert.is_nil(item.text:find("🚩", 1, true))
   end)
 
   it("open_message fetches the body, marks read, and invalidates the list cache", function()
