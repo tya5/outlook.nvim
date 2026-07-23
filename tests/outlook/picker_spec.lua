@@ -199,3 +199,125 @@ describe("outlook.picker (cache/dedupe)", function()
     assert.equals(2, #calls)
   end)
 end)
+
+-- M.load_more() only runs on the snacks.picker path, so these tests
+-- inject a fake `snacks` module (package.loaded["snacks"] = {...}) to
+-- exercise it without a real snacks.nvim install (unavailable in this
+-- environment — see docs/HANDOFF.md for what's confirmed vs. not).
+describe("outlook.picker load_more (snacks path)", function()
+  local calls
+  local pick_calls
+
+  local function msg(entry_id)
+    return {
+      entry_id = entry_id,
+      subject = "s",
+      from = "f",
+      received = "t",
+      unread = false,
+      flag_status = "none",
+    }
+  end
+
+  before_each(function()
+    calls = {}
+    pick_calls = {}
+
+    package.loaded["outlook.picker"] = nil
+    package.loaded["outlook.helper"] = nil
+    package.loaded["outlook.config"] = nil
+    package.loaded["outlook.notify"] = nil
+    package.loaded["outlook.preview"] = nil
+    package.loaded["snacks"] = nil
+
+    package.loaded["outlook.helper"] = {
+      request = function(method, params, cb)
+        table.insert(calls, { method = method, params = params, cb = cb })
+      end,
+      is_running = function()
+        return true
+      end,
+      start = function() end,
+      prewarm = function() end,
+    }
+
+    package.loaded["snacks"] = {
+      picker = {
+        pick = function(opts)
+          table.insert(pick_calls, opts)
+        end,
+      },
+    }
+  end)
+
+  after_each(function()
+    vim.wait(50)
+    package.loaded["snacks"] = nil
+  end)
+
+  it("fetches a bigger page and grows the picker's items table in place", function()
+    local picker = require("outlook.picker")
+
+    picker.list({ folder = "inbox", limit = 50 })
+    calls[1].cb(true, { items = { msg("e1") } })
+    vim.wait(20) -- M.list()'s success path calls M.show() via vim.schedule
+
+    assert.equals(1, #pick_calls)
+    local items_ref = pick_calls[1].items
+    assert.equals(1, #items_ref)
+
+    local fake_picker = {
+      refresh = function() end,
+    }
+    pick_calls[1].actions.load_more(fake_picker, nil)
+
+    assert.equals(2, #calls)
+    assert.equals("list_messages", calls[2].method)
+    assert.equals(100, calls[2].params.limit) -- 50 + the load-more page size
+
+    calls[2].cb(true, { items = { msg("e1"), msg("e2") } })
+    vim.wait(20)
+
+    assert.equals(2, #items_ref) -- same table object grew in place
+    assert.equals("e2", items_ref[2].entry_id)
+  end)
+
+  it("does not fire overlapping load_more requests while one is in flight", function()
+    local picker = require("outlook.picker")
+
+    picker.list({ folder = "inbox", limit = 50 })
+    calls[1].cb(true, { items = {} })
+    vim.wait(20)
+
+    local fake_picker = {
+      refresh = function() end,
+    }
+    pick_calls[1].actions.load_more(fake_picker, nil)
+    assert.equals(2, #calls)
+
+    pick_calls[1].actions.load_more(fake_picker, nil) -- still loading: no-op
+    assert.equals(2, #calls)
+
+    calls[2].cb(true, { items = {} })
+  end)
+
+  it("supports load_more for search results too (method/params from :OutlookSearch)", function()
+    local picker = require("outlook.picker")
+
+    picker.show({ msg("e1") }, {
+      title = "Outlook: Search: foo",
+      method = "search_messages",
+      params = { query = "foo", limit = 50 },
+    })
+
+    local fake_picker = {
+      refresh = function() end,
+    }
+    pick_calls[1].actions.load_more(fake_picker, nil)
+
+    assert.equals(1, #calls)
+    assert.equals("search_messages", calls[1].method)
+    assert.equals("foo", calls[1].params.query)
+    assert.equals(100, calls[1].params.limit)
+  end)
+end)

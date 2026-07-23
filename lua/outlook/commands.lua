@@ -19,14 +19,19 @@ function M.setup()
         return
       end
       require("outlook.notify").info("Outlook: 検索中…")
-      require("outlook.helper").request("search_messages", { query = query, limit = 50 }, function(ok, result)
+      local params = { query = query, limit = 50 }
+      require("outlook.helper").request("search_messages", params, function(ok, result)
         if not ok then
           return vim.schedule(function()
             require("outlook.notify").error(result)
           end)
         end
         vim.schedule(function()
-          require("outlook.picker").show(result.items, { title = "Outlook: Search: " .. query })
+          require("outlook.picker").show(result.items, {
+            title = "Outlook: Search: " .. query,
+            method = "search_messages",
+            params = params,
+          })
         end)
       end)
     end)

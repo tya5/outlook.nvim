@@ -185,19 +185,14 @@ local function refresh_row(picker, item)
   if not picker then
     return
   end
-  -- Best-effort: ask the picker to redraw now so the row updates
-  -- immediately rather than only on the next redraw snacks would have
-  -- done anyway (e.g. the cursor moving off this row and back). The
-  -- exact refresh call isn't confirmed against a real snacks.nvim
-  -- install from this environment, so any mismatch here is silently
-  -- swallowed — the mutated item.text/unread/flag_status above are
-  -- what actually matters and are always applied regardless.
+  -- Confirmed against snacks.nvim's source (lua/snacks/picker/core/picker.lua):
+  -- Picker:refresh() clears the selection, sets the target back to the
+  -- current item, and re-runs the finder/matcher. Since our finder is
+  -- the same `items` table we mutated above (see M.show), this should
+  -- redraw the row with the fresh text. Still pcall-guarded since it's
+  -- untested against a real install from this environment.
   pcall(function()
-    if picker.list and picker.list.update then
-      picker.list:update()
-    elseif picker.update then
-      picker:update()
-    end
+    picker:refresh()
   end)
 end
 
@@ -258,6 +253,14 @@ local function to_picker_item(msg)
   }
 end
 
+--- "Load more" state for the currently-open snacks picker (see
+--- M.load_more below), or nil if no open picker supports it (the
+--- vim.ui.select fallback, or M.show() called without method/params).
+--- @type { method: string, params: table, items: table[], limit: integer, loading: boolean }?
+local current_list_state = nil
+
+local LOAD_MORE_PAGE_SIZE = 50
+
 --- @param picker table? see refresh_row. The confirm handler passes
 --- none (the picker is closing anyway); the vim.ui.select fallback has
 --- none either way.
@@ -303,19 +306,91 @@ function M.toggle_flag(item, picker)
   end)
 end
 
---- Render an already-fetched message list (used by :OutlookSearch, which
---- fetches via its own helper call and hands results straight to the UI).
+--- Explicit action (picker's <C-n>): fetch a bigger page of the same
+--- list/search and replace the picker's items with it, without closing
+--- the picker.
+---
+--- This is NOT true incremental pagination: Outlook COM's Items
+--- collection has no offset/cursor, and snacks.picker's finder is
+--- re-run from scratch rather than appended to (confirmed against
+--- snacks.nvim's source — see docs/DESIGN.md 6.1), so "loading more"
+--- means re-fetching from the start with a larger `limit` and
+--- replacing the whole item set. Guarded against overlapping requests
+--- via state.loading; only ever runs when the user presses the key.
+function M.load_more(picker)
+  local state = current_list_state
+  if not state or state.loading then
+    return
+  end
+  state.loading = true
+
+  local new_limit = state.limit + LOAD_MORE_PAGE_SIZE
+  local params = vim.tbl_extend("force", {}, state.params, { limit = new_limit })
+
+  notify.info("Outlook: もっと読み込み中…")
+  helper.request(state.method, params, function(ok, result)
+    state.loading = false
+    if not ok then
+      return vim.schedule(function()
+        notify.error(result)
+      end)
+    end
+    vim.schedule(function()
+      if current_list_state ~= state then
+        return -- superseded by a newer list()/search in the meantime
+      end
+      local reached_end = #result.items <= #state.items
+      state.limit = new_limit
+      state.params = params
+
+      -- Mutate the same table object handed to Snacks.picker.pick (see
+      -- M.show) in place, rather than assigning a new table, so the
+      -- picker's finder reference stays valid.
+      local new_items = vim.tbl_map(to_picker_item, result.items)
+      for i = #state.items, 1, -1 do
+        state.items[i] = nil
+      end
+      for i, it in ipairs(new_items) do
+        state.items[i] = it
+      end
+
+      pcall(function()
+        picker:refresh()
+      end)
+
+      if reached_end then
+        notify.info("Outlook: これ以上のメールはありません")
+      end
+    end)
+  end)
+end
+
+--- Render an already-fetched message list.
 --- @param messages table[] raw items from the helper (see docs/DESIGN.md)
---- @param opts table? { title }
+--- @param opts table? { title, method, params } — method/params (e.g.
+--- {folder=,limit=,unread_only=} or {query=,limit=}) enable <C-n>
+--- "load more"; omit them to disable it for this listing.
 function M.show(messages, opts)
   opts = opts or {}
 
   if has_snacks() then
     local Snacks = require("snacks")
+    local items = vim.tbl_map(to_picker_item, messages)
+
+    current_list_state = opts.method
+        and {
+          method = opts.method,
+          params = opts.params or {},
+          items = items,
+          limit = (opts.params and opts.params.limit) or #items,
+          loading = false,
+        }
+      or nil
+
     Snacks.picker.pick({
       source = "outlook_messages",
       title = opts.title or "Outlook",
-      items = vim.tbl_map(to_picker_item, messages),
+      items = items,
       format = function(item)
         return { { item.text, item.unread and "OutlookUnread" or "Normal" } }
       end,
@@ -338,6 +413,9 @@ function M.show(messages, opts)
         load_body = function(picker, item)
           load_body(item, picker)
         end,
+        load_more = function(picker, _)
+          M.load_more(picker)
+        end,
       },
       win = {
         input = {
@@ -345,6 +423,7 @@ function M.show(messages, opts)
             ["<C-r>"] = { "toggle_read", mode = { "i", "n" } },
             ["<C-f>"] = { "toggle_flag", mode = { "i", "n" } },
             ["<C-l>"] = { "load_body", mode = { "i", "n" } },
+            ["<C-n>"] = { "load_more", mode = { "i", "n" } },
           },
         },
       },
@@ -383,7 +462,7 @@ function M.list(opts)
       end)
     end
     vim.schedule(function()
-      M.show(result, { title = opts.title })
+      M.show(result, { title = opts.title, method = "list_messages", params = params })
     end)
   end)
 
