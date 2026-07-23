@@ -41,7 +41,9 @@ $script:FolderMap = @{
   sent   = 5  # olFolderSentMail
   drafts = 16 # olFolderDrafts
 }
-$OL_MAIL_ITEM = 43 # olMail (MailItem.Class)
+$OL_MAIL_ITEM = 43        # olMail (MailItem.Class)
+$OL_APPOINTMENT_ITEM = 26 # olAppointment (AppointmentItem.Class)
+$OL_FOLDER_CALENDAR = 9   # olFolderCalendar
 
 function Write-Response {
   param($Object)
@@ -107,6 +109,46 @@ function Get-FlagStatusName {
     2 { return "flagged" }
     1 { return "complete" }
     default { return "none" }
+  }
+}
+
+function Get-BusyStatusName {
+  # AppointmentItem.BusyStatus: olFree=0, olTentative=1, olBusy=2, olOutOfOffice=3.
+  param($Item)
+  switch ($Item.BusyStatus) {
+    0 { return "free" }
+    1 { return "tentative" }
+    3 { return "out_of_office" }
+    default { return "busy" }
+  }
+}
+
+function ConvertTo-UnixTime {
+  # Outlook COM hands back DateTime values with no reliable .Kind (COM
+  # doesn't preserve DateTimeKind), but they represent local wall-clock
+  # time in the Outlook profile's timezone. Treat them as such and
+  # convert via the system's local timezone, so the resulting epoch is
+  # unambiguous regardless of how the value's Kind is actually tagged.
+  # almanac.nvim only ever sees this epoch integer — no timezone/locale
+  # handling happens on the Neovim/Lua side (see almanac.nvim's
+  # docs/DESIGN.md 3.2).
+  param([DateTime]$Date)
+  $unspecified = [DateTime]::SpecifyKind($Date, [DateTimeKind]::Unspecified)
+  $utc = [System.TimeZoneInfo]::ConvertTimeToUtc($unspecified, [System.TimeZoneInfo]::Local)
+  return [long][Math]::Floor((New-Object DateTimeOffset($utc)).ToUnixTimeSeconds())
+}
+
+function ConvertTo-EventSummary {
+  param($Item, [string]$StoreId)
+  return @{
+    entry_id = $Item.EntryID
+    store_id = $StoreId
+    subject  = $Item.Subject
+    start    = (ConvertTo-UnixTime -Date $Item.Start)
+    stop     = (ConvertTo-UnixTime -Date $Item.End)
+    all_day  = [bool]$Item.AllDayEvent
+    location = $Item.Location
+    busy     = (Get-BusyStatusName -Item $Item)
   }
 }
 
@@ -285,6 +327,51 @@ function Invoke-SearchMessages {
   return @{ items = $out }
 }
 
+function Invoke-ListEvents {
+  # Params: from/to are Unix epoch seconds (almanac.Range; see
+  # almanac.nvim's docs/DESIGN.md 3.2) marking the visible range.
+  param($Params)
+  if (-not (Connect-Outlook)) {
+    return $null
+  }
+
+  $from = ([DateTimeOffset]::FromUnixTimeSeconds([long]$Params.from)).LocalDateTime
+  $to = ([DateTimeOffset]::FromUnixTimeSeconds([long]$Params.to)).LocalDateTime
+  $limit = if ($Params.limit) { [int]$Params.limit } else { 200 }
+
+  $folder = $script:Namespace.GetDefaultFolder($OL_FOLDER_CALENDAR)
+  $storeId = $folder.StoreID
+  $items = $folder.Items
+  # Expands recurring appointments into individual occurrence instances
+  # within the requested window; without this, a recurring meeting's
+  # master item wouldn't carry the right Start/End for a given week/day.
+  $items.IncludeRecurrences = $true
+  $items.Sort("[Start]")
+
+  # Restrict's date literals are parsed using the same locale as the
+  # running Windows session, and .NET's "g" format string also respects
+  # the current culture, so the two are expected to agree on a real
+  # machine — this is the standard documented pattern for Outlook COM
+  # date-range queries, but is unverified from this environment (see
+  # docs/HANDOFF.md).
+  $filter = "[Start] < '" + $to.ToString("g") + "' AND [End] > '" + $from.ToString("g") + "'"
+  $matched = $items.Restrict($filter)
+
+  $out = New-Object System.Collections.Generic.List[object]
+  $count = 0
+  foreach ($it in $matched) {
+    if ($count -ge $limit) {
+      break
+    }
+    if ($it.Class -ne $OL_APPOINTMENT_ITEM) {
+      continue
+    }
+    $out.Add((ConvertTo-EventSummary -Item $it -StoreId $storeId)) | Out-Null
+    $count++
+  }
+  return @{ items = $out }
+}
+
 function Invoke-Method {
   param([string]$Method, $Params)
   switch ($Method) {
@@ -297,6 +384,7 @@ function Invoke-Method {
     "set_flag"        { return Invoke-SetFlag -Params $Params -Flagged $true }
     "clear_flag"      { return Invoke-SetFlag -Params $Params -Flagged $false }
     "search_messages" { return Invoke-SearchMessages -Params $Params }
+    "list_events"     { return Invoke-ListEvents -Params $Params }
     default           { throw "unknown method: $Method" }
   }
 }

@@ -31,6 +31,12 @@ function M.check()
   else
     vim.health.info("snacks.nvim not found — falling back to vim.ui.select for lists")
   end
+
+  if pcall(require, "almanac") then
+    vim.health.ok("almanac.nvim detected (:OutlookCalendar is available)")
+  else
+    vim.health.info("almanac.nvim not found — :OutlookCalendar will notify and do nothing until it's installed")
+  end
 end
 
 return M

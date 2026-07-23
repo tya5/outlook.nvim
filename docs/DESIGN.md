@@ -9,7 +9,7 @@
 
 **v1 の非ゴール(段階的に後回し)**
 - メール送信・返信・新規作成(Object Model Guard の送信プロンプト、下書き作成フローなど検討事項が多いため v2 送り)
-- カレンダー/予定表・会議招待の作成/応答
+- カレンダー/予定表の**読み取り専用表示**は`list_events` + [almanac.nvim](https://github.com/tya5/almanac.nvim)連携として実装済み(10節)。予定の新規作成・出欠回答・招待送信は引き続き非ゴール(送信を伴う操作はメール送信と同じ理由でv2以降に送る)
 - COM イベント(NewMailEx)によるリアルタイム通知 — v1 はポーリングのみ
 - New Outlook (Web/Graphベースの新UI) 対応 — Classic Outlook 前提
 
@@ -67,6 +67,7 @@ Neovim → ヘルパー(リクエスト、1行1JSON、`\n` 区切り):
 | `mark_read` / `mark_unread` | 既読状態変更 |
 | `set_flag` / `clear_flag` | フォローアップフラグの設定/解除(`MailItem.FlagStatus`。v1は`none`⇔`flagged`の二値のみ、`complete`は未対応) |
 | `search_messages` | `Items.Restrict` によるDASL/Jetフィルタ検索(差出人・件名・日付・未読) |
+| `list_events` | カレンダーの予定一覧(10節。`from`/`to`はUnix epoch秒の範囲指定) |
 
 各メソッドは PowerShell 側で `Items.Sort("[ReceivedTime]", $true)` → `Restrict(...)` の順で処理し、大量メールの全走査を避ける。一覧表示に必要な項目(件名/差出人/日時/既読/フラグ状態)のみ返し、本文は `get_message` で個別取得(遅延ロード)。
 
@@ -94,6 +95,7 @@ lua/outlook/
   preview.lua      -- snacks.win によるメール本文プレビュー/読み取りウィンドウ
   commands.lua     -- :Outlook系ユーザーコマンド定義
   keymaps.lua      -- <leader>m 配下のキーマップ + which-key group登録
+  calendar.lua     -- almanac.nvim連携(10節)。almanac.nvim未導入時はno-op
 ```
 
 - **picker.lua**: `snacks.nvim` の有無で判定し、あれば `Snacks.picker.pick` でメール一覧(件名/差出人/日時、未読は強調表示)+ プレビュー(既定は件名/差出人/日時のヘッダのみ。本文は含まない — 一覧取得時に`Body`へアクセスしないための設計判断。3.2節参照)+ アクション(既読切替、本文を`preview.lua`のウィンドウで開く、`<C-l>`でpicker内プレビューに本文を読み込む)を提供。無い環境では `vim.ui.select` + 別コマンドでの本文表示にデグレードする。
@@ -155,10 +157,22 @@ snacks.nvimのソース(`lua/snacks/picker/core/finder.lua`, `lua/snacks/picker/
 6. Outlook側での既読状態変更(他クライアント/デバイスからの変更)を、この一覧キャッシュ(既定15秒)がどこまで許容して古いままにするかは実運用で様子見。
 7. `list_folders` は実装済みだが呼び出し元(コマンド/キーマップ)が無い未使用API。`Get-FolderByName` が `inbox`/`sent`/`drafts` の既定フォルダ名しか解決できず、`list_folders` が返す任意の `path`(例 `"受信トレイ/プロジェクトA"`)からフォルダを引くには PS側にパス解決処理を追加する必要があるため、`:OutlookFolders` のようなフォルダ選択コマンドの追加は本体スコープでは見送っている。追加する場合は Get-FolderByName の拡張とセットで行うこと。
 8. フラグは v1 では `none`⇔`flagged` の二値トグルのみ(`<C-f>`)。`FlagStatus = 1`(`olFlagComplete`, 完了マーク)・`FlagRequest`("Follow up"以外のカスタム文言)・`FlagDueBy`(期限日時)は未対応。必要になれば `Invoke-SetFlag` にオプション引数を足す形で拡張できる。
+9. `Invoke-ListEvents` の `Restrict` 日付フィルタ(`[Start] < 'g形式文字列' AND [End] > 'g形式文字列'`)は、Outlook COM自動化で広く使われる定石パターンだが、`.ToString("g")` の書式と Outlook側のロケール依存パーサが実機(日本語Windows等)で正しく噛み合うかは未検証。10節・docs/HANDOFF.mdの実機確認事項を参照。
 
 ## 9. 段階的ロードマップ
 
 - **v1**: 本ドキュメントのスコープ(閲覧・既読管理・検索)
+- **v1.1**: カレンダー読み取り専用表示(`list_events` + almanac.nvim連携。10節)
 - **v2**: 下書き作成・送信(`.Display()`優先でユーザー確認を挟む)、添付ファイル一覧/保存
-- **v3**: カレンダー(予定一覧・会議応答)、複数アカウント対応
+- **v3**: 予定の新規作成・出欠回答、複数アカウント対応
+
+## 10. カレンダー連携([almanac.nvim](https://github.com/tya5/almanac.nvim))
+
+outlook.nvim自身はカレンダーUIを持たず(1節のゴール通り)、汎用の月/週/日カレンダーUIプラグイン**almanac.nvim**へOutlookの予定データを渡すだけの薄い変換層として`lua/outlook/calendar.lua`を実装した。
+
+- **`M.provider(range, cb)`**: almanac.nvimの`EventProvider`契約(非同期`function(range, cb)`形。almanac.nvim側 docs/DESIGN.md 3.2節)を満たす関数。`range.from`/`range.to`(epoch秒)をそのまま`list_events`の`from`/`to`に渡し、結果を`almanac.Event`形式(`id=entry_id`, `title=subject`, `data={entry_id=, store_id=}`)に変換する。
+- **`M.open()`**: `:OutlookCalendar`(既定キー`<leader>mc`)から呼ばれ、`almanac.Calendar`インスタンスを(初回のみ)生成して`events = M.provider`で紐付け、以降は使い回す(`show()`を呼ぶだけ)。**almanac.nvimは任意の依存**(`pcall(require, "almanac")`で判定)であり、未導入時は`:OutlookCalendar`が通知を出すだけで何も壊れない — 既存の`snacks.nvim`任意依存と同じ作法。
+- **`event_selected`ハンドラ**はv1では`notify.info`で件名/場所を表示するのみ。`open_message`(メール本文の全文表示)に相当する「予定の詳細表示」はまだ無く、将来作業として残っている。
+- 日時変換(PS側の`ConvertTo-UnixTime`)は、OutlookのCOMが返す`DateTime`(`Kind`が信頼できない)を「ローカル時刻」とみなし`TimeZoneInfo.Local`でUTC変換してからUnix epoch秒にする。almanac.nvim/Neovim側は一切タイムゾーンを意識しない(almanac.nvim docs/DESIGN.md 3.2の設計方針通り)。
+- **実機未検証**: `Invoke-ListEvents`の日付範囲`Restrict`フィルタ(8節9番)、および`IncludeRecurrences=$true`による定例会議の展開が実際のOutlookで期待通り動くかは、この開発環境(Windows/Outlookなし)では確認できていない。docs/HANDOFF.mdに検証項目を追加した。
 - **v4検討**: 新着通知(ポーリング間隔短縮 or COMイベント化の再検討)

@@ -40,6 +40,10 @@ function M.setup()
   vim.api.nvim_create_user_command("OutlookHelperRestart", function()
     require("outlook.helper").restart()
   end, { desc = "Restart the outlook.nvim PowerShell helper process" })
+
+  vim.api.nvim_create_user_command("OutlookCalendar", function()
+    require("outlook.calendar").open()
+  end, { desc = "Open the Outlook calendar (requires almanac.nvim)" })
 end
 
 return M
