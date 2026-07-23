@@ -113,18 +113,99 @@ end
 --- (see docs/DESIGN.md and helper/outlook-helper.ps1's
 --- ConvertTo-MessageSummary): fetching Body for every row in a folder
 --- listing is slow and touches an Object Model Guard-sensitive
---- property. The preview pane below is header-only for v1; full body
---- is fetched on demand via open_message()/get_message.
+--- property. The preview pane is header-only until the user explicitly
+--- asks to load the body (see body_cache/render_preview below) — never
+--- automatically on cursor movement, so browsing the list never fires a
+--- get_message per row.
 local function preview_lines(msg)
-  local hint = msg.unread and "(未読 — <CR>で開くと本文を取得し既読になります)"
-    or "(<CR>で本文を開く)"
   return {
     ("Subject : %s"):format(msg.subject or ""),
     ("From    : %s"):format(msg.from or ""),
     ("Date    : %s"):format(msg.received or ""),
-    "",
-    hint,
   }
+end
+
+---@type table<string, string> entry_id -> fetched body, so re-viewing an
+--- already-loaded message's preview doesn't re-fetch it.
+local body_cache = {}
+
+--- The ctx from the most recent snacks preview() call, so the explicit
+--- "load body" action (bound to <C-l>, see M.show) can write into the
+--- already-visible preview pane instead of needing some "force a
+--- redraw" API from snacks that may or may not exist.
+local current_preview_ctx = nil
+
+--- Compose the preview pane's lines: header, plus either the cached
+--- body or a hint to load it.
+local function render_preview(item)
+  local lines = preview_lines(item)
+  local body = body_cache[item.entry_id]
+  table.insert(lines, "")
+  if body then
+    table.insert(lines, string.rep("-", 40))
+    table.insert(lines, "")
+    vim.list_extend(lines, vim.split(body, "\n", { plain = true }))
+  else
+    table.insert(lines, "(<C-l> で本文を読み込む — 読み込むと既読になります)")
+  end
+  return lines
+end
+
+--- Push freshly rendered lines into the preview pane if it's still
+--- showing this same item (the user may have moved the cursor to a
+--- different item between triggering the load and the response
+--- arriving; in that case there's nothing to update).
+local function refresh_preview_if_current(item)
+  if current_preview_ctx and current_preview_ctx.item and current_preview_ctx.item.entry_id == item.entry_id then
+    -- The picker may have been closed between triggering the load and
+    -- the response arriving; set_lines on a destroyed preview buffer
+    -- would error, so this is best-effort.
+    pcall(function()
+      current_preview_ctx.preview:set_lines(render_preview(item))
+    end)
+  end
+end
+
+--- Fetch a message's full body via get_message, then mark it read (if
+--- it was unread) — matching common mail-client UX where viewing a
+--- message is what marks it read, whether that view is the full
+--- floating window (open_message) or the picker's own preview pane
+--- (load_body). Both are explicit user actions; nothing here fires on
+--- its own.
+local function fetch_and_mark_read(item, on_body)
+  helper.request("get_message", { entry_id = item.entry_id, store_id = item.store_id }, function(ok, result)
+    if not ok then
+      return vim.schedule(function()
+        notify.error(result)
+      end)
+    end
+    vim.schedule(function()
+      on_body(result)
+    end)
+    if item.unread then
+      helper.request("mark_read", { entry_id = item.entry_id, store_id = item.store_id }, function(ok2)
+        if ok2 then
+          item.unread = false
+          invalidate_lists()
+        end
+      end)
+    end
+  end)
+end
+
+--- Explicit action (picker's <C-l>): load the current item's body into
+--- the picker's own preview pane, without leaving the picker (unlike
+--- <CR>, which opens the full floating window). Only ever runs when
+--- the user presses the key — never automatically.
+local function load_body(item)
+  if body_cache[item.entry_id] then
+    refresh_preview_if_current(item)
+    return
+  end
+  fetch_and_mark_read(item, function(result)
+    body_cache[item.entry_id] = result.body or ""
+    refresh_preview_if_current(item)
+  end)
 end
 
 local function to_picker_item(msg)
@@ -140,23 +221,9 @@ local function to_picker_item(msg)
 end
 
 function M.open_message(item)
-  helper.request("get_message", { entry_id = item.entry_id, store_id = item.store_id }, function(ok, result)
-    if not ok then
-      return vim.schedule(function()
-        notify.error(result)
-      end)
-    end
-    vim.schedule(function()
-      preview.open(result)
-    end)
-    if item.unread then
-      -- Opening a message marks it read, matching common mail-client UX.
-      helper.request("mark_read", { entry_id = item.entry_id, store_id = item.store_id }, function(ok)
-        if ok then
-          invalidate_lists()
-        end
-      end)
-    end
+  fetch_and_mark_read(item, function(result)
+    body_cache[item.entry_id] = result.body or ""
+    preview.open(result)
   end)
 end
 
@@ -190,7 +257,8 @@ function M.show(messages, opts)
         return { { item.text, item.unread and "OutlookUnread" or "Normal" } }
       end,
       preview = function(ctx)
-        ctx.preview:set_lines(preview_lines(ctx.item))
+        current_preview_ctx = ctx
+        ctx.preview:set_lines(render_preview(ctx.item))
         return true
       end,
       confirm = function(picker, item)
@@ -201,11 +269,15 @@ function M.show(messages, opts)
         toggle_read = function(_, item)
           M.toggle_read(item)
         end,
+        load_body = function(_, item)
+          load_body(item)
+        end,
       },
       win = {
         input = {
           keys = {
             ["<C-r>"] = { "toggle_read", mode = { "i", "n" } },
+            ["<C-l>"] = { "load_body", mode = { "i", "n" } },
           },
         },
       },

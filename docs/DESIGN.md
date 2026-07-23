@@ -95,7 +95,8 @@ lua/outlook/
   keymaps.lua      -- <leader>m 配下のキーマップ + which-key group登録
 ```
 
-- **picker.lua**: `snacks.nvim` の有無で判定し、あれば `Snacks.picker.pick` でメール一覧(件名/差出人/日時、未読は強調表示)+ プレビュー(件名/差出人/日時のヘッダのみ。本文は含まない — 一覧取得時に`Body`へアクセスしないための設計判断。3.2節参照)+ アクション(既読切替、本文を`preview.lua`のウィンドウで開く)を提供。無い環境では `vim.ui.select` + 別コマンドでの本文表示にデグレードする。
+- **picker.lua**: `snacks.nvim` の有無で判定し、あれば `Snacks.picker.pick` でメール一覧(件名/差出人/日時、未読は強調表示)+ プレビュー(既定は件名/差出人/日時のヘッダのみ。本文は含まない — 一覧取得時に`Body`へアクセスしないための設計判断。3.2節参照)+ アクション(既読切替、本文を`preview.lua`のウィンドウで開く、`<C-l>`でpicker内プレビューに本文を読み込む)を提供。無い環境では `vim.ui.select` + 別コマンドでの本文表示にデグレードする。
+  - **`<C-l>`(本文をプレビューに読み込む)**: `get_message` を呼び本文を取得して、`preview()` コールバックが直近に受け取った `ctx`(`current_preview_ctx` として保持)へ直接書き込む。あくまでユーザーがキーを押した時だけ実行される明示操作であり、カーソル移動に連動した自動読み込みは行わない(一覧を素早くスクロールしただけでOutlook COMへ`get_message`が連打されるのを避けるため)。取得した本文は `entry_id` をキーに `body_cache` へ保持し、同一メッセージの再表示では再取得しない。取得成功時は `open_message` と同じ「未読なら既読にする」処理(`fetch_and_mark_read`)を共有する。
 - **preview.lua**: `Snacks.win` で読み取り専用フローティングウィンドウを開き、本文を非編集バッファとして表示(`bo.modifiable=false`, `bo.filetype="mail"` 等)。
 - 通知(取得失敗、Outlook未起動等)は `Snacks.notify` / 無ければ `vim.notify` にフォールバック。
 
@@ -105,7 +106,7 @@ lua/outlook/
   - `<leader>mm` : メール一覧を開く(picker)
   - `<leader>mu` : 未読のみ一覧
   - `<leader>ms` : 検索(`vim.ui.input`で件名/差出人条件を受けて`search_messages`)
-  - 既読/未読トグル専用の既定キーマップは持たない。メッセージを開くと自動的に既読になり(通常のメールクライアントのUXに合わせた設計判断)、`snacks.picker` 使用時のみ picker 内 `<C-r>` で明示トグルできる。
+  - 既読/未読トグル専用の既定キーマップは持たない。メッセージを開く、または `<C-l>` で本文を読み込むと自動的に既読になり(通常のメールクライアントのUXに合わせた設計判断)、`snacks.picker` 使用時のみ picker 内 `<C-r>` で明示トグルできる。`<C-l>` はpicker側の固定バインドで `opts.keys` の対象外。
 - ユーザーコマンド: `:OutlookOpen`, `:OutlookRefresh`(キャッシュ無視で再取得), `:OutlookUnread`, `:OutlookSearch`, `:OutlookHelperRestart`(ヘルパープロセスの再起動、デバッグ用)。
 
 ## 6.1 レイテンシ対策(実装済み)

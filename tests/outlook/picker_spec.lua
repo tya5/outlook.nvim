@@ -122,6 +122,36 @@ describe("outlook.picker (cache/dedupe)", function()
     assert.equals(2, info_calls)
   end)
 
+  it("open_message fetches the body, marks read, and invalidates the list cache", function()
+    local picker = require("outlook.picker")
+
+    picker.list({ folder = "inbox" })
+    calls[1].cb(true, { items = {} })
+    assert.equals(1, #calls)
+
+    picker.open_message({ entry_id = "e1", store_id = "s1", unread = true })
+    assert.equals(2, #calls) -- the get_message request
+    assert.equals("get_message", calls[2].method)
+    calls[2].cb(true, { subject = "hi", from = "a@b.com", received = "2026-01-01 00:00", body = "hello" })
+
+    assert.equals(3, #calls) -- mark_read fired because the item was unread
+    assert.equals("mark_read", calls[3].method)
+    calls[3].cb(true, { entry_id = "e1", unread = false })
+
+    picker.list({ folder = "inbox" })
+    assert.equals(4, #calls) -- cache invalidated by the mark_read, not served stale
+  end)
+
+  it("open_message does not mark read when the item is already read", function()
+    local picker = require("outlook.picker")
+
+    picker.open_message({ entry_id = "e2", store_id = "s1", unread = false })
+    assert.equals(1, #calls) -- only get_message
+    calls[1].cb(true, { subject = "hi", from = "a@b.com", received = "2026-01-01 00:00", body = "hello" })
+
+    assert.equals(1, #calls) -- no mark_read follow-up
+  end)
+
   it("treats different folders as separate cache entries", function()
     local picker = require("outlook.picker")
 
