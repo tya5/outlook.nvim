@@ -106,7 +106,8 @@ end
 
 local function format_item(msg)
   local status = msg.unread and "●" or " "
-  return string.format("%s %-20s %s", status, msg.from or "", msg.subject or "(no subject)")
+  local flag = (msg.flag_status == "flagged") and "🚩" or " "
+  return string.format("%s%s %-20s %s", status, flag, msg.from or "", msg.subject or "(no subject)")
 end
 
 --- list_messages/search_messages intentionally omit the message body
@@ -118,11 +119,15 @@ end
 --- automatically on cursor movement, so browsing the list never fires a
 --- get_message per row.
 local function preview_lines(msg)
-  return {
+  local lines = {
     ("Subject : %s"):format(msg.subject or ""),
     ("From    : %s"):format(msg.from or ""),
     ("Date    : %s"):format(msg.received or ""),
   }
+  if msg.flag_status and msg.flag_status ~= "none" then
+    table.insert(lines, ("Flag    : %s"):format(msg.flag_status))
+  end
+  return lines
 end
 
 ---@type table<string, string> entry_id -> fetched body, so re-viewing an
@@ -215,6 +220,7 @@ local function to_picker_item(msg)
     from = msg.from,
     received = msg.received,
     unread = msg.unread,
+    flag_status = msg.flag_status,
     entry_id = msg.entry_id,
     store_id = msg.store_id,
   }
@@ -229,6 +235,22 @@ end
 
 function M.toggle_read(item)
   local method = item.unread and "mark_read" or "mark_unread"
+  helper.request(method, { entry_id = item.entry_id, store_id = item.store_id }, function(ok, result)
+    if ok then
+      invalidate_lists()
+    else
+      vim.schedule(function()
+        notify.error(result)
+      end)
+    end
+  end)
+end
+
+--- v1 only toggles between "flagged" and "none" (see
+--- helper/outlook-helper.ps1's Invoke-SetFlag); "complete" isn't
+--- reachable from here yet.
+function M.toggle_flag(item)
+  local method = (item.flag_status == "flagged") and "clear_flag" or "set_flag"
   helper.request(method, { entry_id = item.entry_id, store_id = item.store_id }, function(ok, result)
     if ok then
       invalidate_lists()
@@ -269,6 +291,9 @@ function M.show(messages, opts)
         toggle_read = function(_, item)
           M.toggle_read(item)
         end,
+        toggle_flag = function(_, item)
+          M.toggle_flag(item)
+        end,
         load_body = function(_, item)
           load_body(item)
         end,
@@ -277,6 +302,7 @@ function M.show(messages, opts)
         input = {
           keys = {
             ["<C-r>"] = { "toggle_read", mode = { "i", "n" } },
+            ["<C-f>"] = { "toggle_flag", mode = { "i", "n" } },
             ["<C-l>"] = { "load_body", mode = { "i", "n" } },
           },
         },

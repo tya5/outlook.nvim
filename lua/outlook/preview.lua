@@ -12,8 +12,11 @@ local function lines_for(message)
     ("Subject : %s"):format(message.subject or ""),
     ("From    : %s"):format(message.from or ""),
     ("Date    : %s"):format(message.received or ""),
-    string.rep("-", 40),
   }
+  if message.flag_status and message.flag_status ~= "none" then
+    table.insert(header, ("Flag    : %s"):format(message.flag_status))
+  end
+  table.insert(header, string.rep("-", 40))
   local body = vim.split(message.body or "", "\n", { plain = true })
   return vim.list_extend(header, body)
 end

@@ -100,6 +100,16 @@ function Get-FolderByName {
   return $script:Namespace.GetDefaultFolder($olFolder)
 }
 
+function Get-FlagStatusName {
+  # MailItem.FlagStatus: olFlagMarked=2, olFlagComplete=1, olNoFlag=0.
+  param($Item)
+  switch ($Item.FlagStatus) {
+    2 { return "flagged" }
+    1 { return "complete" }
+    default { return "none" }
+  }
+}
+
 function ConvertTo-MessageSummary {
   # Deliberately does not touch $Item.Body or $Item.Parent: Body is slow
   # to fetch per-row across a whole folder listing and is one of the
@@ -109,12 +119,13 @@ function ConvertTo-MessageSummary {
   # on demand by get_message when a single message is opened.
   param($Item, [string]$StoreId)
   return @{
-    entry_id = $Item.EntryID
-    store_id = $StoreId
-    subject  = $Item.Subject
-    from     = $Item.SenderName
-    received = $Item.ReceivedTime.ToString("yyyy-MM-dd HH:mm")
-    unread   = [bool]$Item.UnRead
+    entry_id    = $Item.EntryID
+    store_id    = $StoreId
+    subject     = $Item.Subject
+    from        = $Item.SenderName
+    received    = $Item.ReceivedTime.ToString("yyyy-MM-dd HH:mm")
+    unread      = [bool]$Item.UnRead
+    flag_status = (Get-FlagStatusName -Item $Item)
   }
 }
 
@@ -193,10 +204,11 @@ function Invoke-GetMessage {
     return New-HelperError -Code "ITEM_NOT_FOUND" -Message "指定されたメッセージが見つかりませんでした(削除・移動された可能性があります)"
   }
   return @{
-    subject  = $item.Subject
-    from     = $item.SenderName
-    received = $item.ReceivedTime.ToString("yyyy-MM-dd HH:mm")
-    body     = $item.Body
+    subject     = $item.Subject
+    from        = $item.SenderName
+    received    = $item.ReceivedTime.ToString("yyyy-MM-dd HH:mm")
+    body        = $item.Body
+    flag_status = (Get-FlagStatusName -Item $item)
   }
 }
 
@@ -212,6 +224,29 @@ function Invoke-SetRead {
   $item.UnRead = $Unread
   $item.Save()
   return @{ entry_id = $item.EntryID; unread = [bool]$item.UnRead }
+}
+
+function Invoke-SetFlag {
+  # v1 only toggles between "none" and "flagged" (olNoFlag/olFlagMarked);
+  # marking a flag "complete" (olFlagComplete) isn't exposed yet.
+  param($Params, [bool]$Flagged)
+  if (-not (Connect-Outlook)) {
+    return $null
+  }
+  $item = Get-ItemByIdOrNull -EntryId $Params.entry_id -StoreId $Params.store_id
+  if (-not $item) {
+    return New-HelperError -Code "ITEM_NOT_FOUND" -Message "指定されたメッセージが見つかりませんでした(削除・移動された可能性があります)"
+  }
+  if ($Flagged) {
+    $item.FlagStatus = 2 # olFlagMarked
+    if (-not $item.FlagRequest) {
+      $item.FlagRequest = "Follow up"
+    }
+  } else {
+    $item.FlagStatus = 0 # olNoFlag
+  }
+  $item.Save()
+  return @{ entry_id = $item.EntryID; flag_status = (Get-FlagStatusName -Item $item) }
 }
 
 function Invoke-SearchMessages {
@@ -259,6 +294,8 @@ function Invoke-Method {
     "get_message"     { return Invoke-GetMessage -Params $Params }
     "mark_read"       { return Invoke-SetRead -Params $Params -Unread $false }
     "mark_unread"     { return Invoke-SetRead -Params $Params -Unread $true }
+    "set_flag"        { return Invoke-SetFlag -Params $Params -Flagged $true }
+    "clear_flag"      { return Invoke-SetFlag -Params $Params -Flagged $false }
     "search_messages" { return Invoke-SearchMessages -Params $Params }
     default           { throw "unknown method: $Method" }
   }

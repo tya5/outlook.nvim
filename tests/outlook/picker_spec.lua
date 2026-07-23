@@ -122,6 +122,26 @@ describe("outlook.picker (cache/dedupe)", function()
     assert.equals(2, info_calls)
   end)
 
+  it("toggles the flag (set_flag/clear_flag) and invalidates the list cache", function()
+    local picker = require("outlook.picker")
+
+    picker.list({ folder = "inbox" })
+    calls[1].cb(true, { items = {} })
+    assert.equals(1, #calls)
+
+    picker.toggle_flag({ entry_id = "e1", store_id = "s1", flag_status = "none" })
+    assert.equals(2, #calls)
+    assert.equals("set_flag", calls[2].method)
+    calls[2].cb(true, { entry_id = "e1", flag_status = "flagged" })
+
+    picker.list({ folder = "inbox" })
+    assert.equals(3, #calls) -- cache invalidated by the flag change
+
+    picker.toggle_flag({ entry_id = "e1", store_id = "s1", flag_status = "flagged" })
+    assert.equals(4, #calls)
+    assert.equals("clear_flag", calls[4].method)
+  end)
+
   it("open_message fetches the body, marks read, and invalidates the list cache", function()
     local picker = require("outlook.picker")
 
