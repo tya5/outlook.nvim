@@ -25,6 +25,11 @@ M.defaults = {
   -- (or a malformed response line the helper silently drops) leaving a
   -- request pending forever.
   request_timeout_ms = 30000,
+  -- Where the full message view (opened via the picker's <CR>) shows
+  -- up: "buffer" (a normal listed buffer in the current window — the
+  -- same footing as any other open file) or "float" (a floating
+  -- window, snacks.win-backed when available). See lua/outlook/preview.lua.
+  message_window = "buffer",
 }
 
 ---@type outlook.Config

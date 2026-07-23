@@ -98,7 +98,7 @@ lua/outlook/
 
 - **picker.lua**: `snacks.nvim` の有無で判定し、あれば `Snacks.picker.pick` でメール一覧(件名/差出人/日時、未読は強調表示)+ プレビュー(既定は件名/差出人/日時のヘッダのみ。本文は含まない — 一覧取得時に`Body`へアクセスしないための設計判断。3.2節参照)+ アクション(既読切替、本文を`preview.lua`のウィンドウで開く、`<C-l>`でpicker内プレビューに本文を読み込む)を提供。無い環境では `vim.ui.select` + 別コマンドでの本文表示にデグレードする。
   - **`<C-l>`(本文をプレビューに読み込む)**: `get_message` を呼び本文を取得して、`preview()` コールバックが直近に受け取った `ctx`(`current_preview_ctx` として保持)へ直接書き込む。あくまでユーザーがキーを押した時だけ実行される明示操作であり、カーソル移動に連動した自動読み込みは行わない(一覧を素早くスクロールしただけでOutlook COMへ`get_message`が連打されるのを避けるため)。取得した本文は `entry_id` をキーに `body_cache` へ保持し、同一メッセージの再表示では再取得しない。取得成功時は `open_message` と同じ「未読なら既読にする」処理(`fetch_and_mark_read`)を共有する。
-- **preview.lua**: `Snacks.win` で読み取り専用フローティングウィンドウを開き、本文を非編集バッファとして表示(`bo.modifiable=false`, `bo.filetype="mail"` 等)。
+- **preview.lua**: `opts.message_window` で開き方を切り替える。既定 `"buffer"` は、現在のウィンドウに読み取り専用の**通常の listed バッファ**(`buflisted=true`, `bufhidden=hide`)を開く方式で、フローティングでも強制split でもなく、他の(コードの)バッファと同格に `<C-^>`/`:bnext`/bufferline等で行き来できることを重視した設計(利用者からのフィードバックで、フローティング/split より通常バッファの方が読み物として自然という判断)。`"float"` にすると従来通り `Snacks.win`(無ければ`nvim_open_win`)による読み取り専用フローティングウィンドウになる。いずれも本文は非編集バッファとして表示(`bo.modifiable=false`, `bo.filetype="mail"` 等)。
 - 通知(取得失敗、Outlook未起動等)は `Snacks.notify` / 無ければ `vim.notify` にフォールバック。
 
 ## 6. キーマップ / コマンド (実装済み)
