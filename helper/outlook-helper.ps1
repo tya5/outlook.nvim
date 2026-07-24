@@ -396,6 +396,52 @@ function Invoke-ListEvents {
   return @{ items = $out }
 }
 
+function Invoke-GetAppointment {
+  # Params: entry_id/store_id identify the item (as usual); occurrence_start
+  # (Unix epoch seconds, optional) is the *specific occurrence's* own start
+  # time as already known from list_events, needed for the recurring-series
+  # case below.
+  param($Params)
+  if (-not (Connect-Outlook)) {
+    return $null
+  }
+  $item = Get-ItemByIdOrNull -EntryId $Params.entry_id -StoreId $Params.store_id
+  if (-not $item) {
+    return New-HelperError -Code "ITEM_NOT_FOUND" -Message "Appointment not found (it may have been deleted or moved)"
+  }
+
+  # All occurrences of a recurring series share one EntryID, and
+  # GetItemFromID with that EntryID returns the recurrence *master*, not
+  # the specific occurrence the user selected in the calendar (confirmed
+  # via Microsoft's Outlook COM docs — see docs/HANDOFF.md). If we know
+  # which occurrence was selected, resolve the actual occurrence via
+  # RecurrencePattern.GetOccurrence so Subject/Start/End/Location reflect
+  # that occurrence (including any per-occurrence edits/exceptions)
+  # instead of always showing the master's own values.
+  if ($item.IsRecurring -and $Params.occurrence_start) {
+    try {
+      $occurrenceDate = ([DateTimeOffset]::FromUnixTimeSeconds([long]$Params.occurrence_start)).LocalDateTime
+      $pattern = $item.GetRecurrencePattern()
+      $item = $pattern.GetOccurrence($occurrenceDate)
+    } catch {
+      # No occurrence on that exact date (e.g. it was deleted from the
+      # series since list_events ran) — fall back to the master rather
+      # than fail outright; better to show something than nothing.
+    }
+  }
+
+  return @{
+    subject   = $item.Subject
+    organizer = $item.Organizer
+    start     = $item.Start.ToString("yyyy-MM-dd HH:mm")
+    stop      = $item.End.ToString("yyyy-MM-dd HH:mm")
+    all_day   = [bool]$item.AllDayEvent
+    location  = $item.Location
+    busy      = (Get-BusyStatusName -Item $item)
+    body      = $item.Body
+  }
+}
+
 function Invoke-Method {
   param([string]$Method, $Params)
   switch ($Method) {
@@ -409,6 +455,7 @@ function Invoke-Method {
     "clear_flag"      { return Invoke-SetFlag -Params $Params -Flagged $false }
     "search_messages" { return Invoke-SearchMessages -Params $Params }
     "list_events"     { return Invoke-ListEvents -Params $Params }
+    "get_appointment" { return Invoke-GetAppointment -Params $Params }
     default           { throw "unknown method: $Method" }
   }
 }

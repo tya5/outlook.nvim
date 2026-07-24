@@ -10,6 +10,7 @@
 
 local helper = require("outlook.helper")
 local notify = require("outlook.notify")
+local preview = require("outlook.preview")
 
 local M = {}
 
@@ -66,11 +67,27 @@ function M.open()
   if not M._cal then
     local Almanac = require("almanac")
     M._cal = Almanac({ events = M.provider })
-    -- v1: no full appointment view yet (mirroring outlook.picker's
-    -- open_message is future work — see docs/DESIGN.md); just surface
-    -- what was selected so the calendar is usable standalone.
+    -- Mirrors outlook.picker's open_message: fetch full details on
+    -- selection and open them the same way a mail message is opened
+    -- (lua/outlook/preview.lua's M.open_event, "buffer" or "float" per
+    -- opts.message_window). occurrence_start (the specific occurrence's
+    -- own start epoch, already known from list_events) lets the helper
+    -- resolve the exact occurrence of a recurring meeting instead of
+    -- always returning the series master — see Invoke-GetAppointment.
     M._cal:on("event_selected", function(_, event)
-      notify.info(("%s (%s)"):format(event.title, event.location or "no location"))
+      helper.request("get_appointment", {
+        entry_id = event.data.entry_id,
+        store_id = event.data.store_id,
+        occurrence_start = event.start,
+      }, function(ok, result)
+        vim.schedule(function()
+          if not ok then
+            notify.error(result)
+            return
+          end
+          preview.open_event(result)
+        end)
+      end)
     end)
   end
 

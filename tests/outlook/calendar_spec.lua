@@ -13,6 +13,7 @@ describe("outlook.calendar", function()
     package.loaded["outlook.calendar"] = nil
     package.loaded["outlook.helper"] = nil
     package.loaded["outlook.notify"] = nil
+    package.loaded["outlook.preview"] = nil
     package.loaded["almanac"] = nil
 
     package.loaded["outlook.helper"] = {
@@ -29,6 +30,7 @@ describe("outlook.calendar", function()
 
   after_each(function()
     package.loaded["almanac"] = nil
+    package.loaded["outlook.preview"] = nil
   end)
 
   describe("provider", function()
@@ -139,6 +141,91 @@ describe("outlook.calendar", function()
       assert.equals(fake_cal, first)
       assert.equals(fake_cal, second)
       assert.equals(1, new_calls) -- constructed once, shown twice
+    end)
+  end)
+
+  describe("event_selected", function()
+    --- Sets up a fake almanac.Calendar that captures the handler
+    --- registered via cal:on("event_selected", ...), and returns it so
+    --- the test can invoke it directly (mirrors how almanac.nvim would
+    --- call it when the user presses <CR> on an event line).
+    local function open_and_capture_handler()
+      local handlers = {}
+      local fake_cal = {
+        show = function(self)
+          return self
+        end,
+        on = function(self, event_name, cb)
+          handlers[event_name] = cb
+          return self
+        end,
+      }
+      package.loaded["almanac"] = setmetatable({}, {
+        __call = function()
+          return fake_cal
+        end,
+      })
+      package.loaded["outlook.calendar"] = nil
+      local calendar = require("outlook.calendar")
+      calendar.open()
+      return handlers.event_selected
+    end
+
+    it("requests get_appointment and opens the result via preview.open_event", function()
+      local opened
+      package.loaded["outlook.preview"] = {
+        open = function() end,
+        open_event = function(event)
+          opened = event
+        end,
+      }
+      local on_event_selected = open_and_capture_handler()
+
+      on_event_selected(nil, {
+        id = "e1",
+        title = "Team sync",
+        start = 1100,
+        data = { entry_id = "e1", store_id = "s1" },
+      })
+
+      assert.equals(1, #calls)
+      assert.equals("get_appointment", calls[1].method)
+      assert.same({ entry_id = "e1", store_id = "s1", occurrence_start = 1100 }, calls[1].params)
+
+      calls[1].cb(true, { subject = "Team sync", organizer = "Alice", start = "2026-08-24 08:00", body = "Agenda…" })
+      vim.wait(20)
+
+      assert.is_not_nil(opened)
+      assert.equals("Team sync", opened.subject)
+      assert.equals("Alice", opened.organizer)
+    end)
+
+    it("notifies on error instead of opening a preview", function()
+      local notify_errors = 0
+      package.loaded["outlook.notify"] = {
+        error = function()
+          notify_errors = notify_errors + 1
+        end,
+        info = function() end,
+      }
+      local opened = false
+      package.loaded["outlook.preview"] = {
+        open = function() end,
+        open_event = function()
+          opened = true
+        end,
+      }
+      local on_event_selected = open_and_capture_handler()
+
+      on_event_selected(
+        nil,
+        { id = "e1", title = "Team sync", start = 1100, data = { entry_id = "e1", store_id = "s1" } }
+      )
+      calls[1].cb(false, { code = "ITEM_NOT_FOUND", message = "boom" })
+      vim.wait(20)
+
+      assert.is_false(opened)
+      assert.equals(1, notify_errors)
     end)
   end)
 end)
