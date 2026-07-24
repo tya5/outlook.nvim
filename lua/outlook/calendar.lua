@@ -11,6 +11,7 @@
 local helper = require("outlook.helper")
 local notify = require("outlook.notify")
 local preview = require("outlook.preview")
+local config = require("outlook.config")
 
 local M = {}
 
@@ -33,21 +34,81 @@ local function to_almanac_event(msg)
   }
 end
 
+-- Cache + in-flight dedup for list_events, mirroring picker.lua's fetch()
+-- for list_messages/search_messages (see docs/DESIGN.md 6.1 and
+-- docs/HANDOFF.md 11). Without this, every view switch and every
+-- <C-f>/<C-b> page (month view especially — its range is 5-6 weeks,
+-- wide enough that recurring-meeting expansion over it is real COM
+-- work) re-hits Outlook COM from scratch, even when revisiting a
+-- range already fetched moments ago.
+---@type table<string, {events: almanac.Event[], ts: integer}>
+local cache = {}
+---@type table<string, fun(ok:boolean, events_or_err:any)[]>
+local inflight = {}
+
+local function now_ms()
+  return vim.uv.now()
+end
+
+local function range_key(range)
+  return ("%d:%d"):format(range.from, range.to)
+end
+
+--- @return boolean served_from_cache true if `cb` was already invoked
+--- synchronously from a warm cache entry; false means a real helper
+--- round-trip is in flight (just started, or joined an existing one).
+local function fetch(range, cb)
+  local key = range_key(range)
+
+  local cached = cache[key]
+  if cached and (now_ms() - cached.ts) < config.options.cache_ttl_ms then
+    cb(true, cached.events)
+    return true
+  end
+
+  if inflight[key] then
+    table.insert(inflight[key], cb)
+    return false
+  end
+  inflight[key] = { cb }
+
+  helper.request("list_events", { from = range.from, to = range.to }, function(ok, result)
+    local waiters = inflight[key]
+    inflight[key] = nil
+    local events = ok and vim.tbl_map(to_almanac_event, result.items) or nil
+    if ok then
+      cache[key] = { events = events, ts = now_ms() }
+    end
+    for _, waiter in ipairs(waiters) do
+      waiter(ok, ok and events or result)
+    end
+  end)
+  return false
+end
+
 --- almanac.EventProvider: fetches Outlook calendar events for the given
 --- range via the helper's list_events method (async function(range, cb) form).
 --- @param range almanac.Range
 --- @param cb fun(events: almanac.Event[])
 function M.provider(range, cb)
-  helper.request("list_events", { from = range.from, to = range.to }, function(ok, result)
+  local served_from_cache = fetch(range, function(ok, events_or_err)
     vim.schedule(function()
       if not ok then
-        notify.error(result)
+        notify.error(events_or_err)
         cb({})
         return
       end
-      cb(vim.tbl_map(to_almanac_event, result.items))
+      cb(events_or_err)
     end)
   end)
+
+  -- Only show a "loading" indicator when a real helper round-trip is
+  -- actually happening; a cache hit already invoked cb() above
+  -- synchronously (well, on the next scheduled tick) and needs no such
+  -- feedback — matches picker.lua's M.list().
+  if not served_from_cache then
+    notify.info("Outlook: loading calendar…")
+  end
 end
 
 --- The single shared almanac.Calendar instance backing :OutlookCalendar

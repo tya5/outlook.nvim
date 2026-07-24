@@ -95,6 +95,78 @@ describe("outlook.calendar", function()
       assert.same({}, got_events)
       assert.equals(1, notify_errors)
     end)
+
+    it("reuses a cached result for the same range instead of re-hitting the helper", function()
+      local calendar = require("outlook.calendar")
+      local first_events, second_events
+
+      calendar.provider({ from = 1000, to = 2000 }, function(events)
+        first_events = events
+      end)
+      calls[1].cb(true, { items = { { entry_id = "e1", store_id = "s1", subject = "Team sync", start = 1100 } } })
+      vim.wait(20)
+
+      calendar.provider({ from = 1000, to = 2000 }, function(events)
+        second_events = events
+      end)
+      vim.wait(20)
+
+      assert.equals(1, #calls) -- second call served from cache, no second helper.request
+      assert.is_not_nil(first_events)
+      assert.same(first_events, second_events)
+    end)
+
+    it("treats a different range as a separate cache entry", function()
+      local calendar = require("outlook.calendar")
+
+      calendar.provider({ from = 1000, to = 2000 }, function() end)
+      calendar.provider({ from = 3000, to = 4000 }, function() end)
+
+      assert.equals(2, #calls)
+      assert.same({ from = 1000, to = 2000 }, calls[1].params)
+      assert.same({ from = 3000, to = 4000 }, calls[2].params)
+    end)
+
+    it("coalesces concurrent identical requests into a single helper call", function()
+      local calendar = require("outlook.calendar")
+      local first_events, second_events
+
+      calendar.provider({ from = 1000, to = 2000 }, function(events)
+        first_events = events
+      end)
+      calendar.provider({ from = 1000, to = 2000 }, function(events)
+        second_events = events
+      end)
+
+      assert.equals(1, #calls) -- only one in-flight helper.request for both callers
+      calls[1].cb(true, { items = { { entry_id = "e1", store_id = "s1", subject = "Team sync", start = 1100 } } })
+      vim.wait(20)
+
+      assert.is_not_nil(first_events)
+      assert.same(first_events, second_events)
+    end)
+
+    it("only shows a loading notification on a real fetch, not on a cache hit", function()
+      local loading_notices = 0
+      package.loaded["outlook.notify"] = {
+        error = function() end,
+        info = function(msg)
+          if msg:find("loading") then
+            loading_notices = loading_notices + 1
+          end
+        end,
+      }
+      package.loaded["outlook.calendar"] = nil
+      local calendar = require("outlook.calendar")
+
+      calendar.provider({ from = 1000, to = 2000 }, function() end)
+      calls[1].cb(true, { items = {} })
+      vim.wait(20)
+      assert.equals(1, loading_notices)
+
+      calendar.provider({ from = 1000, to = 2000 }, function() end) -- cache hit
+      assert.equals(1, loading_notices) -- unchanged
+    end)
   end)
 
   describe("open", function()
