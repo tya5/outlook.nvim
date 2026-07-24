@@ -336,7 +336,13 @@ function Invoke-ListEvents {
   }
 
   $from = ([DateTimeOffset]::FromUnixTimeSeconds([long]$Params.from)).LocalDateTime
-  $to = ([DateTimeOffset]::FromUnixTimeSeconds([long]$Params.to)).LocalDateTime
+  # almanac.Range.to is the *inclusive* last visible day, at its own
+  # midnight (almanac.nvim docs/DESIGN.md 3.2 — e.g. day view sends
+  # from == to, both that day's midnight). Add a day to get the
+  # exclusive upper bound the Restrict filter below needs; using $to
+  # as-is made day view's window zero-width ([Start] < midnight AND
+  # [End] > midnight), which excludes every ordinary daytime event.
+  $to = ([DateTimeOffset]::FromUnixTimeSeconds([long]$Params.to)).LocalDateTime.AddDays(1)
   $limit = if ($Params.limit) { [int]$Params.limit } else { 200 }
 
   $folder = $script:Namespace.GetDefaultFolder($OL_FOLDER_CALENDAR)
