@@ -125,10 +125,16 @@ function Get-BusyStatusName {
 
 function ConvertTo-UnixTime {
   # Outlook COM hands back DateTime values with no reliable .Kind (COM
-  # doesn't preserve DateTimeKind), but they represent local wall-clock
-  # time in the Outlook profile's timezone. Treat them as such and
-  # convert via the system's local timezone, so the resulting epoch is
-  # unambiguous regardless of how the value's Kind is actually tagged.
+  # doesn't preserve DateTimeKind). Per Microsoft's docs,
+  # AppointmentItem.Start/.End are always expressed in the Outlook
+  # profile's *current* local time zone (Application.TimeZones.
+  # CurrentTimeZone), regardless of the appointment's own stored
+  # StartTimeZone — so treating the value as local wall-clock time and
+  # converting via TimeZoneInfo.Local is the documented-correct
+  # approach, as long as Outlook's configured time zone and the
+  # Windows system time zone agree (the normal case; they can only
+  # diverge if one was changed without the other, e.g. mid-trip —
+  # still a real-machine-only edge case, see docs/HANDOFF.md).
   # almanac.nvim only ever sees this epoch integer — no timezone/locale
   # handling happens on the Neovim/Lua side (see almanac.nvim's
   # docs/DESIGN.md 3.2).
@@ -348,18 +354,30 @@ function Invoke-ListEvents {
   $folder = $script:Namespace.GetDefaultFolder($OL_FOLDER_CALENDAR)
   $storeId = $folder.StoreID
   $items = $folder.Items
-  # Expands recurring appointments into individual occurrence instances
-  # within the requested window; without this, a recurring meeting's
-  # master item wouldn't carry the right Start/End for a given week/day.
-  $items.IncludeRecurrences = $true
+  # Order matters here per Microsoft's own docs (Items.IncludeRecurrences
+  # remarks): Sort by [Start] ascending FIRST, then set IncludeRecurrences,
+  # then Restrict. Setting IncludeRecurrences before sorting (or filtering
+  # a list that was sorted/restricted before IncludeRecurrences was set)
+  # is documented to silently misbehave — e.g. returning every occurrence
+  # of every recurring item unfiltered instead of expanding correctly
+  # within the requested window.
   $items.Sort("[Start]")
+  $items.IncludeRecurrences = $true
 
-  # Restrict's date literals are parsed using the same locale as the
-  # running Windows session, and .NET's "g" format string also respects
-  # the current culture, so the two are expected to agree on a real
-  # machine — this is the standard documented pattern for Outlook COM
-  # date-range queries, but is unverified from this environment (see
-  # docs/HANDOFF.md).
+  # [Start]/[End] are referenced here as bare bracketed property names
+  # (Jet syntax), not an "@SQL="-prefixed DASL query — Microsoft's docs
+  # ("Filtering Items Using a Date-time Comparison") confirm this form
+  # compares both the property and the literal as *local* time, so no
+  # UTC conversion is needed here (UTC conversion only applies to
+  # "@SQL="-style DASL queries referencing a property by namespace).
+  # `.ToString("g")` (short date + short time, no seconds) matches the
+  # documented requirement that the comparison string must omit seconds
+  # or the filter silently misbehaves. Using ToString() with no explicit
+  # culture defers to the process's current culture, which is expected
+  # to track the OS's Regional Settings that Outlook itself parses
+  # against — this is the standard/documented pattern for this style of
+  # query, though exact agreement on a given real machine's locale is
+  # still worth confirming (see docs/HANDOFF.md).
   $filter = "[Start] < '" + $to.ToString("g") + "' AND [End] > '" + $from.ToString("g") + "'"
   $matched = $items.Restrict($filter)
 
